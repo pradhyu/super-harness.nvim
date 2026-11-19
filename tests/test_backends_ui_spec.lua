@@ -77,7 +77,12 @@ assert_eq(l4, 5, "line scan parsed line 5")
 local nvim_term = require("super_harness.backends.nvim_term")
 local agy_adapter = adapters.get("antigravity")
 assert_eq(agy_adapter.status_detector("Bypass Sandbox Mode: Always Allow / Deny"), "awaiting_input", "detects approval prompt")
-assert_eq(agy_adapter.status_detector("Waiting for your confirmation"), "awaiting_input", "detects waiting for attention")
+assert_eq(agy_adapter.status_detector("Proceed with changes? [y/N]"), "awaiting_input", "detects explicit [y/N] prompt")
+assert_eq(
+  agy_adapter.status_detector("I fixed the approval popup and permission check:\n1. First item\n2. Second item\nConfirm if this looks good."),
+  nil,
+  "does not false-positive on normal prose mentioning approve/permission/confirm or numbered lists"
+)
 assert_eq(
   agy_adapter.status_detector("1. Option A\n2. Option B\n3. Other\n↑/↓ to navigate · Enter to select · Esc to cancel"),
   "awaiting_input",
@@ -166,6 +171,38 @@ assert_eq(multi_steps[3].seq, "\27[B", "moves down to option 3")
 assert_eq(multi_steps[4].seq, " ", "toggles option 3 with Space")
 assert_eq(multi_steps[5].seq, "\r", "submits multi-select with Enter")
 
+-- Prose numbered list must NOT be treated as an interactive popup
+local parsed_prose = approval.parse_prompt(table.concat({
+  "I checked the approval popup and found 3 bugs:",
+  "1. False-positive prompt detection",
+  "2. Focus stealing while typing",
+  "3. Fallback sends y blindly",
+}, "\n"))
+assert_true(not parsed_prose.is_interactive, "prose numbered list is not interactive")
+
+-- Unnumbered cursor menu with numbered scrollback above it must parse ONLY the real menu options
+local parsed_unnumbered = approval.parse_prompt(table.concat({
+  "Previous response:",
+  "1. Old list item one",
+  "2. Old list item two",
+  "",
+  "Run `git push` outside sandbox?",
+  "  ❯ Allow once",
+  "    Always allow `git push`",
+  "    Deny",
+  "  ↑/↓ navigate · Enter to select · Esc to cancel",
+}, "\n"))
+assert_true(parsed_unnumbered.is_interactive, "unnumbered cursor menu is interactive")
+assert_eq(parsed_unnumbered.kind, "select", "unnumbered cursor menu is select")
+assert_eq(#parsed_unnumbered.options, 3, "parsed exact 3 unnumbered options without scrollback list")
+assert_eq(parsed_unnumbered.options[1].label, "Allow once", "option 1 is Allow once")
+assert_eq(parsed_unnumbered.options[2].label, "Always allow `git push`", "option 2 is Always allow")
+assert_eq(parsed_unnumbered.options[3].label, "Deny", "option 3 is Deny")
+assert_eq(parsed_unnumbered.initial_idx, 1, "cursor starts on Allow once")
+
+-- Auto-open refuses to open on non-interactive prose
+assert_eq(approval.open(nil, { text = "1. Not a prompt\n2. Just prose", auto = true }), nil, "auto-open skips non-interactive prose")
+
 -- Rendered-screen TUI attention detection opens Neovim-style approval popup & auto-closes when cleared
 local tui_buf = vim.api.nvim_create_buf(false, true)
 vim.api.nvim_buf_set_lines(tui_buf, 0, -1, false, {
@@ -190,10 +227,16 @@ assert_true(approval.is_open(), "auto-opened Neovim-style approval popup from re
 assert_true(not window.is_visible(tui_sess), "did not open raw harness terminal when attention_style == neovim")
 approval.move(1)
 assert_eq(approval._cursor, 2, "j/k move updates Neovim popup cursor")
--- Once user answers and prompt disappears from screen, state recovers & Neovim popup auto-closes
+-- Confirming records prompt signature so identical screen does NOT re-open in a loop
+approval.confirm_current(1)
+assert_true(not approval.is_open(), "closed popup after confirming")
+assert_eq(nvim_term._check_rendered_screen(tui_sess), "awaiting_input", "prompt still on screen before agent updates")
+assert_true(not approval.is_open(), "did not re-open popup on identical already-submitted prompt")
+-- Once user answers and prompt disappears from screen, state recovers & signature resets
 vim.api.nvim_buf_set_lines(tui_buf, 0, -1, false, { "Received your answer.", "Ready for next prompt." })
 assert_eq(nvim_term._check_rendered_screen(tui_sess), nil, "clears awaiting_input when prompt leaves screen")
 assert_eq(tui_sess.state, "thinking", "recovers state so future prompts can notify again")
+assert_eq(tui_sess._last_prompt_sig, nil, "cleared prompt signature once prompt left screen")
 assert_true(not approval.is_open(), "auto-closed Neovim approval popup when prompt left screen")
 pcall(vim.api.nvim_buf_delete, tui_buf, { force = true })
 

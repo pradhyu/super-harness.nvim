@@ -183,6 +183,38 @@ local function parse_option_line(line)
   }
 end
 
+--- Build a plain unnumbered option table from a line (used for cursor-based menus like `❯ Allow once` / `Deny`)
+---@param line string
+---@return table
+local function make_plain_option(line)
+  local lower = line:lower()
+  local is_other = lower:match("^other") ~= nil
+    or lower:find("type your own", 1, true) ~= nil
+    or lower:find("type your answer", 1, true) ~= nil
+    or lower:find("type something", 1, true) ~= nil
+    or lower:find("custom answer", 1, true) ~= nil
+  return {
+    label = line,
+    num = nil,
+    selected = false,
+    has_checkbox = false,
+    checked = false,
+    is_other = is_other,
+    is_recommended = lower:find("(recommended)", 1, true) ~= nil,
+  }
+end
+
+--- Compute a stable fingerprint for a parsed prompt to prevent re-opening on the same screen
+---@param prompt table
+---@return string
+local function prompt_signature(prompt)
+  local parts = { prompt.kind or "", prompt.progress or "", prompt.question or "" }
+  for _, opt in ipairs(prompt.options or {}) do
+    table.insert(parts, opt.label or "")
+  end
+  return table.concat(parts, "\0")
+end
+
 --- Parse rendered terminal text into a structured Neovim popup prompt
 ---@param text string
 ---@return table prompt
@@ -200,10 +232,9 @@ function M.parse_prompt(text)
 
   local progress = nil
   local multi_hint = false
-  local options = {}
-  local first_opt_idx = nil
-  local question_lines = {}
+  local has_nav_hint = false
   local hints = {}
+  local is_hint = {}
 
   for idx, line in ipairs(cleaned) do
     local lower = line:lower()
@@ -223,58 +254,159 @@ function M.parse_prompt(text)
     end
 
     if is_hint_line(lower) then
+      is_hint[idx] = true
       table.insert(hints, line)
-    else
-      local opt = parse_option_line(line)
-      if opt then
-        if not first_opt_idx then
-          first_opt_idx = idx
-        end
-        table.insert(options, opt)
-      elseif not first_opt_idx then
-        if not (q_cur and q_tot and lower:match("^question%s+%d+")) then
-          table.insert(question_lines, line)
-        end
+      if lower:find("enter to select", 1, true)
+        or lower:find("enter to submit", 1, true)
+        or lower:find("enter to confirm", 1, true)
+        or lower:find("enter to continue", 1, true)
+        or lower:find("space to toggle", 1, true)
+        or lower:find("space to select", 1, true)
+        or lower:find("esc to cancel", 1, true)
+        or lower:find("esc to dismiss", 1, true)
+        or lower:find("↑/↓", 1, true)
+        or ((lower:find("↑", 1, true) or lower:find("↓", 1, true) or lower:find("j/k", 1, true))
+          and (lower:find("navigate", 1, true) or lower:find("select", 1, true) or lower:find("submit", 1, true) or lower:find("cancel", 1, true)))
+      then
+        has_nav_hint = true
       end
     end
   end
 
-  -- Keep only the most recent 4 question lines above the options to avoid stale scrollback
-  if #question_lines > 4 then
-    local trimmed_q = {}
-    for i = #question_lines - 3, #question_lines do
-      table.insert(trimmed_q, question_lines[i])
+  -- Anchor search to the bottom-most interactive block so earlier scrollback lists are never mixed in.
+  local bottom_limit = #cleaned
+  while bottom_limit >= 1 and is_hint[bottom_limit] do
+    bottom_limit = bottom_limit - 1
+  end
+
+  -- First pass: collect contiguous structured option rows (cursor / checkbox / numbered) from bottom_limit upwards
+  local options = {}
+  local first_opt_idx = nil
+  local i = bottom_limit
+  while i >= 1 do
+    if is_hint[i] then
+      break
     end
-    question_lines = trimmed_q
+    local opt = parse_option_line(cleaned[i])
+    if opt then
+      table.insert(options, 1, opt)
+      first_opt_idx = i
+      i = i - 1
+    else
+      break
+    end
+  end
+
+  -- Second pass: handle unnumbered cursor-based menus (e.g. `❯ Allow once` / `Always allow ...` / `Deny`)
+  -- where only the active row has `❯`/`▶`/`▸` and unselected rows below it are plain text above the nav hint.
+  if #options < 2 and has_nav_hint and bottom_limit >= 2 then
+    local cursor_idx = nil
+    local search_top = math.max(1, bottom_limit - 8)
+    for k = bottom_limit, search_top, -1 do
+      if not is_hint[k] then
+        local opt = parse_option_line(cleaned[k])
+        if opt and opt.selected then
+          cursor_idx = k
+          break
+        end
+      end
+    end
+    if cursor_idx then
+      local menu_opts = {}
+      local menu_top = cursor_idx
+      -- Include unselected short option rows above cursor_idx only if they look like sibling choices (not a question ending in `?` or `:`)
+      local k = cursor_idx - 1
+      while k >= search_top and not is_hint[k] do
+        local line = cleaned[k]
+        local ends_q = line:sub(-1) == "?" or line:sub(-1) == ":"
+        local is_prog = line:lower():match("^question%s+%d+") ~= nil
+        if ends_q or is_prog or #line > 72 then
+          break
+        end
+        local parsed_k = parse_option_line(line)
+        table.insert(menu_opts, 1, parsed_k or make_plain_option(line))
+        menu_top = k
+        k = k - 1
+      end
+      -- Add the cursor row itself and all non-hint rows down to bottom_limit
+      for m = cursor_idx, bottom_limit do
+        if not is_hint[m] then
+          local parsed_m = parse_option_line(cleaned[m])
+          table.insert(menu_opts, parsed_m or make_plain_option(cleaned[m]))
+        end
+      end
+      if #menu_opts >= 2 then
+        options = menu_opts
+        first_opt_idx = menu_top
+      end
+    end
   end
 
   local initial_idx = 1
   local any_checkbox = false
-  for i, opt in ipairs(options) do
+  local any_selected = false
+  for idx, opt in ipairs(options) do
     if opt.selected then
-      initial_idx = i
+      initial_idx = idx
+      any_selected = true
     end
     if opt.has_checkbox then
       any_checkbox = true
     end
   end
 
+  -- Plain numbered lists in prose (no cursor, no checkboxes, no nav hint) are NOT interactive menus
+  if #options >= 2 and not any_selected and not any_checkbox and not has_nav_hint then
+    options = {}
+    first_opt_idx = nil
+  end
+
+  -- Collect up to 4 question lines immediately above the option block (or at the bottom for confirm prompts)
+  local question_lines = {}
+  local q_end = first_opt_idx and (first_opt_idx - 1) or bottom_limit
+  for k = math.max(1, q_end - 6), q_end do
+    local line = cleaned[k]
+    if line and not is_hint[k] then
+      local lower = line:lower()
+      if not lower:match("^question%s+%d+") then
+        table.insert(question_lines, line)
+      end
+    end
+  end
+  if #question_lines > 4 then
+    local trimmed_q = {}
+    for k = #question_lines - 3, #question_lines do
+      table.insert(trimmed_q, question_lines[k])
+    end
+    question_lines = trimmed_q
+  end
+
   local full_lower = tostring(text or ""):lower()
+  local has_yn = full_lower:find("%[y/n%]") ~= nil
+    or full_lower:find("%(y/n%)") ~= nil
+    or full_lower:find("yes/no", 1, true) ~= nil
+  local has_press_enter = full_lower:find("press enter", 1, true) ~= nil
+    or full_lower:find("press any key", 1, true) ~= nil
+
   local kind
+  local is_interactive = false
   if #options >= 2 then
     kind = (any_checkbox or multi_hint) and "multi_select" or "select"
+    is_interactive = true
   else
-    -- Synthesize clean Neovim options for yes/no / press-enter / approval prompts
+    -- Synthesize clean Neovim options for yes/no / press-enter prompts
     options = {}
     initial_idx = 1
-    if full_lower:find("press enter", 1, true) and not full_lower:find("y/n", 1, true) then
+    if has_press_enter and not has_yn then
       kind = "confirm"
+      is_interactive = true
       options = {
         { label = "Continue (Enter)", send = "\r", is_recommended = true },
         { label = "Cancel (Esc)", send = "\27" },
       }
     else
       kind = "confirm"
+      is_interactive = has_yn
       options = {
         { label = "Approve / Yes", send = "y\r", is_recommended = true },
         { label = "Deny / No", send = "n\r" },
@@ -287,8 +419,9 @@ function M.parse_prompt(text)
     question = "Agent is waiting for your input:"
   end
 
-  return {
+  local prompt = {
     kind = kind,
+    is_interactive = is_interactive,
     question = question,
     progress = progress,
     options = options,
@@ -296,6 +429,8 @@ function M.parse_prompt(text)
     hints = hints,
     raw = text or "",
   }
+  prompt.sig = prompt_signature(prompt)
+  return prompt
 end
 
 --- Build the PTY keystroke sequence for a user action in the Neovim popup
@@ -554,7 +689,11 @@ local function finish_and_dispatch(action)
   M.close()
 
   if sess then
-    -- Reset state & attention cooldown so multi-question flows (e.g. 1/2 -> 2/2) open cleanly
+    -- Remember this prompt signature so we never re-open on the exact same rendered screen,
+    -- while allowing genuinely different follow-up questions (e.g. 1/2 -> 2/2) to open cleanly.
+    if prompt and prompt.sig then
+      sess._last_prompt_sig = prompt.sig
+    end
     if sess.state == "awaiting_input" then
       sess.state = "thinking"
     end
@@ -655,7 +794,7 @@ end
 
 --- Open the Neovim-native floating approval/question popup for a session
 ---@param sess? SuperHarnessSession
----@param opts? { text?: string, prompt?: table, on_submit?: fun(action:table, steps:table[]) }
+---@param opts? { text?: string, prompt?: table, auto?: boolean, on_submit?: fun(action:table, steps:table[]) }
 ---@return integer|nil winid, integer|nil bufnr
 function M.open(sess, opts)
   opts = opts or {}
@@ -671,6 +810,15 @@ function M.open(sess, opts)
       end
     end
     prompt = M.parse_prompt(text or "")
+  end
+
+  if opts.auto then
+    if not prompt.is_interactive then
+      return nil, nil
+    end
+    if sess and prompt.sig and sess._last_prompt_sig == prompt.sig then
+      return nil, nil
+    end
   end
 
   -- Leave terminal/insert/replace mode so Normal-mode popup keymaps (j/k/arrows/1-9/<CR>) work immediately
@@ -751,10 +899,18 @@ function M.open(sess, opts)
   map("i", function() M.prompt_custom() end, "Type Custom Response")
   map("o", function() M.prompt_custom() end, "Type Custom Response")
   map("<Esc>", function() M.cancel() end, "Cancel Prompt in Agent")
-  map("q", function() M.close() end, "Dismiss Popup")
+  map("q", function()
+    if M._sess and M._prompt and M._prompt.sig then
+      M._sess._last_prompt_sig = M._prompt.sig
+    end
+    M.close()
+  end, "Dismiss Popup")
 
   map("t", function()
     local target = M._sess
+    if target and M._prompt and M._prompt.sig then
+      target._last_prompt_sig = M._prompt.sig
+    end
     M.close()
     if target then
       local ok_term, nvim_term = pcall(require, "super_harness.backends.nvim_term")
