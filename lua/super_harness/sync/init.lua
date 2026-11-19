@@ -18,7 +18,19 @@ function M.get_socket()
   return vim.env.NVIM or ""
 end
 
---- Environment variables injected into spawned CLI agents (synergy with harness-use-neovim & MCP)
+--- Return the bundled bin/ directory containing nvim-cli
+---@return string|nil
+function M.get_bin_dir()
+  local src = debug.getinfo(1, "S").source:sub(2)
+  local plugin_root = vim.fn.fnamemodify(src, ":p:h:h:h:h")
+  local bin_dir = plugin_root .. "/bin"
+  if vim.fn.isdirectory(bin_dir) == 1 then
+    return bin_dir
+  end
+  return nil
+end
+
+--- Environment variables injected into spawned CLI agents (bidirectional RPC + bundled nvim-cli)
 ---@param meta { id: string, adapter: string, cwd: string }
 ---@return table<string, string>
 function M.env_for_session(meta)
@@ -34,6 +46,15 @@ function M.env_for_session(meta)
       env.NVIM = sock
       env.NVIM_LISTEN_ADDRESS = sock
       env.SUPER_HARNESS_SOCKET = sock
+    end
+  end
+  if config.options.rpc.prepend_cli_to_path then
+    local bin_dir = M.get_bin_dir()
+    if bin_dir then
+      local cur_path = vim.env.PATH or ""
+      if not cur_path:find(bin_dir, 1, true) then
+        env.PATH = bin_dir .. (cur_path ~= "" and (":" .. cur_path) or "")
+      end
     end
   end
   return env
@@ -157,10 +178,23 @@ function M.teardown()
   pcall(vim.api.nvim_del_augroup_by_name, "SuperHarnessSyncShield")
 end
 
---- Setup Buffer Sync Shield autocmds, libuv watcher, and _G.SuperHarnessBridge RPC facade
+--- Setup Buffer Sync Shield autocmds, libuv watcher, bundled harness_neovim RPC server, and _G.SuperHarnessBridge
 function M.setup()
   if config.options.sync.silent_autoread then
     vim.o.autoread = true
+  end
+
+  -- Initialize bundled harness_neovim bidirectional RPC layer (nvim-cli + :NvimCLI)
+  if config.options.rpc.enabled then
+    local ok_hn, hn = pcall(require, "harness_neovim")
+    if ok_hn and hn.setup then
+      hn.setup({
+        auto_start_server = config.options.rpc.auto_start_server ~= false,
+        set_terminal_env = config.options.rpc.set_terminal_env ~= false,
+        bin_install_dir = config.options.rpc.bin_install_dir,
+        default_float_border = (config.options.ui.float or {}).border or "rounded",
+      })
+    end
   end
 
   _G.SuperHarnessBridge = {

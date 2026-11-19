@@ -112,10 +112,14 @@ M.defaults = {
     start_in_project_root = true,
   },
 
-  -- Bidirectional RPC & harness-use-neovim synergy
+  -- Bidirectional RPC & built-in nvim-cli (formerly harness-use-neovim)
   rpc = {
     enabled = true,
+    auto_start_server = true,
+    set_terminal_env = true,
     inject_nvim_socket = true,
+    prepend_cli_to_path = true, -- Automatically expose bundled bin/nvim-cli inside every spawned harness PTY
+    bin_install_dir = vim.fn.expand("~/.local/bin"),
     write_live_context = true,
   },
 

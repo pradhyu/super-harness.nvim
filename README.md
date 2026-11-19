@@ -17,7 +17,7 @@ See [`SPEC.md`](./SPEC.md) for the full architectural specification.
 - **Floating Markdown Prompt Composer (`<leader>ap`)**: Write prompts with Vim motions and inline `@`-token expansion (`@file`, `@sel`, `@scope`, `@diag`, `@wdiag`, `@diff`, `@staged`, `@bufs`, `@qf`, `@tray`), `<C-t>` token picker, `<C-p>` template library, `<C-s>` send, `<C-b>` broadcast.
 - **Active Buffer Sync Shield**: Pre-prompt auto-flush (`:update`), `uv.fs_event` libuv file watcher, cursor/fold-preserving `:checktime` hot-reload, and side-by-side conflict diff guard when unsaved edits collide with agent disk writes.
 - **Native Review & Diff Engine**: Side-by-side baseline diffsplit (`a` accept, `r` revert, `e` edit, `A` accept all, `R` revert all), quickfix change-list (`]f` / `[f`), and PR-style queued inline review comments (`<leader>ac` → `<leader>aC`).
-- **Bidirectional RPC Synergy (`harness-use-neovim`)**: Automatically injects `$NVIM` / `$NVIM_LISTEN_ADDRESS` / `$SUPER_HARNESS_CONTEXT_FILE` (`live_context.json`) and registers `_G.SuperHarnessBridge`.
+- **Bundled Bidirectional RPC & `nvim-cli` (formerly `harness-use-neovim`)**: Ships `bin/nvim-cli` (pure LuaJIT, cross-platform) and `lua/harness_neovim/` natively! Every spawned harness PTY automatically receives `$NVIM` and `bin/` on `$PATH` so any CLI agent can call `nvim-cli open file:42`, `nvim-cli selection`, `nvim-cli buffer`, `nvim-cli diff`, `nvim-cli notify`, or `nvim-cli edit --wait` out of the box. Run `:SuperHarness install-cli` to also install `nvim-cli` to `~/.local/bin`.
 - **Hot-Reloadable (`:SuperHarnessReload`)**: Cleanly unloads modules, stops libuv watchers, and re-applies config without restarting Neovim.
 
 ---

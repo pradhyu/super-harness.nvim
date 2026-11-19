@@ -28,6 +28,7 @@ local SUBCOMMANDS = {
   "slash",
   "zoom",
   "kill",
+  "install-cli",
   "status",
   "reload",
 }
@@ -105,6 +106,13 @@ vim.api.nvim_create_user_command("SuperHarness", function(opts)
     sh.zoom()
   elseif sub == "kill" then
     sh.kill(fargs[2])
+  elseif sub == "install-cli" then
+    local ok, msg = sh.install_cli(fargs[2])
+    if ok then
+      log.info(msg)
+    else
+      log.error(msg)
+    end
   elseif sub == "reload" then
     sh.reload()
   elseif sub == "status" then

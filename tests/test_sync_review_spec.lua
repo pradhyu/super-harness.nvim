@@ -53,10 +53,15 @@ local payload = review.format_comments_payload(adapters.get("claude"))
 assert_true(payload:find("Rename v to count", 1, true) ~= nil, "comment formatted")
 review.clear_comments()
 
--- RPC bridge env & snapshot
+-- RPC bridge env, bundled nvim-cli PATH injection & harness_neovim integration
 assert_true(type(_G.SuperHarnessBridge) == "table", "_G.SuperHarnessBridge exists")
+assert_true(sh.cli ~= nil and type(sh.cli.api) == "table", "bundled harness_neovim API exposed on sh.cli")
+assert_eq(vim.fn.exists(":NvimCLI"), 2, ":NvimCLI command registered by bundled RPC layer")
+local bin_dir = sync.get_bin_dir()
+assert_true(bin_dir ~= nil and vim.fn.executable(bin_dir .. "/nvim-cli") == 1, "bundled bin/nvim-cli is executable")
 local env = sync.env_for_session({ id = "antigravity#1", adapter = "antigravity", cwd = tmpdir })
 assert_eq(env.SUPER_HARNESS_ID, "antigravity#1", "env SUPER_HARNESS_ID set")
+assert_true(env.PATH ~= nil and env.PATH:find(bin_dir, 1, true) ~= nil, "bundled bin/ prepended to session PATH")
 
 vim.fn.delete(tmpdir, "rf")
 print("🎉 ALL SYNC & REVIEW TESTS PASSED!")

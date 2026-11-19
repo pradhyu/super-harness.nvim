@@ -50,6 +50,13 @@ function M.check()
   else
     health.info("No $NVIM RPC socket active (live_context.json bridge active at " .. sync.live_context_path .. ")")
   end
+
+  local bin_dir = sync.get_bin_dir()
+  if bin_dir and vim.fn.executable(bin_dir .. "/nvim-cli") == 1 then
+    health.ok("Bundled nvim-cli executable ready: " .. bin_dir .. "/nvim-cli")
+  else
+    health.warn("Bundled nvim-cli not found or not executable in plugin bin/ directory")
+  end
 end
 
 return M

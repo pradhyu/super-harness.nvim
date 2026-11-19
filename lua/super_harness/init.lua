@@ -23,8 +23,13 @@ M.backends = backends
 M.context = context
 M.sync = sync
 M.review_engine = review
+M.cli = require("harness_neovim")
 M._initialized = false
 M._last_opts = nil
+
+function M.install_cli(target_dir)
+  return M.cli.install_cli(target_dir or config.options.rpc.bin_install_dir)
+end
 
 --- Initialize super-harness.nvim
 ---@param opts? table
@@ -49,7 +54,14 @@ function M.reload()
   state.reset()
 
   for name, _ in pairs(package.loaded) do
-    if name == "super_harness" or name:match("^super_harness%.") then
+    if
+      name == "super_harness"
+      or name:match("^super_harness%.")
+      or name == "harness_neovim"
+      or name:match("^harness_neovim%.")
+      or name == "nvim_cli"
+      or name:match("^nvim_cli%.")
+    then
       package.loaded[name] = nil
     end
   end
