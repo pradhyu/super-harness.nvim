@@ -98,6 +98,24 @@ assert_true(
   nvim_term._notify_session(bg_sess, "complete", "SuperHarness", "Done", vim.log.levels.INFO),
   "fires complete notification independently of attention cooldown"
 )
+
+-- Auto-open modal float on attention while preserving original session layout
+local modal_sess = backends.spawn("mock_cli", { layout = "drawer", name = "modal_test" })
+assert_true(modal_sess ~= nil, "spawned modal_test")
+backends.hide(modal_sess.id)
+assert_true(not window.is_visible(modal_sess), "modal_test hidden before attention")
+sh.config.options.notifications.auto_open_on_attention = true
+sh.config.options.notifications.attention_layout = "float"
+assert_true(
+  nvim_term._notify_session(modal_sess, "attention", "SuperHarness", "Approve?", vim.log.levels.WARN),
+  "fires attention notification for real session"
+)
+assert_true(window.is_visible(modal_sess), "auto-opened modal window on attention")
+assert_eq(modal_sess.layout, "drawer", "preserved original session layout after temporary modal")
+local win_cfg = vim.api.nvim_win_get_config(modal_sess.winid)
+assert_eq(win_cfg.relative, "editor", "attention modal opened as floating window")
+backends.kill(modal_sess.id)
+
 sh.config.options.notifications.enabled = false
 
 -- Composer @-token expansion, HUD, Review Drawer, Health

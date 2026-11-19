@@ -22,7 +22,7 @@ local function parse_level(level)
   return vim.log.levels.INFO
 end
 
---- Show a notification in Neovim
+--- Show a notification in Neovim (and optionally clickable desktop notification + open harness modal)
 ---@param msg string
 ---@param level string|number|nil
 ---@param opts table?
@@ -32,6 +32,49 @@ function M.notify(msg, level, opts)
   local lvl = parse_level(level)
   local title = opts.title or "Nvim-CLI"
   vim.notify(tostring(msg), lvl, { title = title, timeout = opts.timeout })
+
+  local ok_state, sh_state = pcall(require, "super_harness.state")
+  local ok_term, nvim_term = pcall(require, "super_harness.backends.nvim_term")
+  local ok_log, sh_log = pcall(require, "super_harness.utils.log")
+
+  if ok_state and ok_term and ok_log then
+    local sess = (opts.session and sh_state.get(opts.session)) or sh_state.get_active()
+    local is_attention = opts.attention == true
+    local should_open = opts.open == true or is_attention
+    local target_layout = opts.layout or (is_attention and "float") or nil
+
+    if opts.desktop ~= false and (opts.desktop == true or should_open) then
+      local urgency = opts.urgency or (is_attention and "critical") or (lvl >= vim.log.levels.ERROR and "critical") or "normal"
+      local on_click = nil
+      if sess then
+        on_click = function()
+          sh_log.focus_host_window()
+          nvim_term.open_session(sess, {
+            layout = target_layout,
+            temporary_layout = target_layout ~= nil,
+            enter_insert = true,
+          })
+        end
+      end
+      sh_log.desktop_notify(title, tostring(msg), {
+        urgency = urgency,
+        on_click = on_click,
+        action_label = is_attention and "Approve in Neovim" or "Open in Neovim",
+      })
+    end
+
+    if should_open and sess then
+      vim.schedule(function()
+        nvim_term.open_session(sess, {
+          layout = target_layout or "float",
+          temporary_layout = true,
+          title_prefix = is_attention and "▲ Permission — " or nil,
+          enter_insert = true,
+        })
+      end)
+    end
+  end
+
   return true
 end
 

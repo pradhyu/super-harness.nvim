@@ -37,17 +37,17 @@ Neovim users currently face an uncomfortable choice:
 
 ## 2. Comparative Analysis: What Exists vs. What We Are Building
 
-| Feature / Dimension | Raw `:terminal` / `toggleterm` | `claude-code.nvim` (early forks) | `avante.nvim` / `codecompanion` | `aider.nvim` | **`super-harness.nvim` (Our Vision)** |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Agent Paradigm** | Shell command | Hardcoded to `claude` | Direct LLM API / HTTP (not CLI agent) | Hardcoded to `aider` | **Universal Adapter System** (Antigravity, Claude Code, Aider, Goose, Custom) |
-| **Terminal Key Ergonomics** | Breaks on `<Esc>` / insert mode clashes | Basic `<C-\><C-N>` escape | N/A (Custom buffer UI) | Manual terminal switching | **Modal-Aware Smart Escape & Passthrough Layer** |
-| **Context Injection** | None (manual paste) | Selected text sent via `chansend` | Custom API prompt formatting | Basic `/add` file injection | **Multi-Dimension Context Engine** (Treesitter node, LSP diagnostics, Git diff, `@file:range`, quickfix) |
-| **File Collision Shield** | None (`File changed on disk` alert dialogs) | None / rudimentary `checktime` | N/A (controls buffer directly) | Rudimentary auto-reload | **Active Buffer Sync Shield** (pre-prompt auto-save, libuv file-watchers, zero-dialog safe hot-reload) |
-| **Diff & Review Experience** | Read terminal text | None (rely on git in CLI) | Split buffer diff | None | **Native Review Engine** (Hunk inspector, 3-way diffsplit, quickfix change-list, virtual-text diffs) |
-| **Bidirectional RPC Synergy** | None | None | Custom Lua functions | None | **Full Bidirectional Bridge** (Direct integration with `harness-use-neovim` and MCP servers) |
-| **Multi-Session & Swarms** | Unmanaged terminal buffers | Single session | Single active thread | Single session | **Named Multi-Session Manager** (e.g., Background Reviewer, Active Feature Builder, Quick Ask) |
-| **Statusline & UI Feedback** | Static terminal status | Minimal | Spinners on floating window | None | **Live Agent State Detection** (Idle, Thinking, Executing, Awaiting Approval, Errored) |
-| **Detached / Daemon Sessions** | Lost if Neovim closes | Lost | Lost | Lost | **Pluggable Session Backends** (Built-in Neovim PTY, Tmux, Zellij, or LibUV daemon) |
+| Feature / Dimension            | Raw `:terminal` / `toggleterm`              | `claude-code.nvim` (early forks)  | `avante.nvim` / `codecompanion`       | `aider.nvim`                | **`super-harness.nvim` (Our Vision)**                                                                    |
+| :----------------------------- | :------------------------------------------ | :-------------------------------- | :------------------------------------ | :-------------------------- | :------------------------------------------------------------------------------------------------------- |
+| **Agent Paradigm**             | Shell command                               | Hardcoded to `claude`             | Direct LLM API / HTTP (not CLI agent) | Hardcoded to `aider`        | **Universal Adapter System** (Antigravity, Claude Code, Aider, Goose, Custom)                            |
+| **Terminal Key Ergonomics**    | Breaks on `<Esc>` / insert mode clashes     | Basic `<C-\><C-N>` escape         | N/A (Custom buffer UI)                | Manual terminal switching   | **Modal-Aware Smart Escape & Passthrough Layer**                                                         |
+| **Context Injection**          | None (manual paste)                         | Selected text sent via `chansend` | Custom API prompt formatting          | Basic `/add` file injection | **Multi-Dimension Context Engine** (Treesitter node, LSP diagnostics, Git diff, `@file:range`, quickfix) |
+| **File Collision Shield**      | None (`File changed on disk` alert dialogs) | None / rudimentary `checktime`    | N/A (controls buffer directly)        | Rudimentary auto-reload     | **Active Buffer Sync Shield** (pre-prompt auto-save, libuv file-watchers, zero-dialog safe hot-reload)   |
+| **Diff & Review Experience**   | Read terminal text                          | None (rely on git in CLI)         | Split buffer diff                     | None                        | **Native Review Engine** (Hunk inspector, 3-way diffsplit, quickfix change-list, virtual-text diffs)     |
+| **Bidirectional RPC Synergy**  | None                                        | None                              | Custom Lua functions                  | None                        | **Full Bidirectional Bridge** (Direct integration with `harness-use-neovim` and MCP servers)             |
+| **Multi-Session & Swarms**     | Unmanaged terminal buffers                  | Single session                    | Single active thread                  | Single session              | **Named Multi-Session Manager** (e.g., Background Reviewer, Active Feature Builder, Quick Ask)           |
+| **Statusline & UI Feedback**   | Static terminal status                      | Minimal                           | Spinners on floating window           | None                        | **Live Agent State Detection** (Idle, Thinking, Executing, Awaiting Approval, Errored)                   |
+| **Detached / Daemon Sessions** | Lost if Neovim closes                       | Lost                              | Lost                                  | Lost                        | **Pluggable Session Backends** (Built-in Neovim PTY, Tmux, Zellij, or LibUV daemon)                      |
 
 ---
 

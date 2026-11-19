@@ -138,8 +138,12 @@ M.defaults = {
     enabled = true,
     notify_on_complete = true,
     notify_on_attention = true,
+    auto_open_on_attention = true, -- Automatically pop open the agent window when it needs permission/input
+    attention_layout = "float", -- Layout used when auto-opening a hidden session ("float" | "drawer" | "bottom" | "tab" | nil)
     when = "unfocused", -- "unfocused" | "hidden" | "always"
     desktop = true, -- send OS notification via notify-send / osascript when available
+    click_action = true, -- clickable desktop notifications (notify-send -A) to open/focus the session
+    focus_terminal_on_click = true, -- focus Neovim's host terminal window (e.g. Hyprland) when clicking a notification
     cooldown_ms = 3000,
     sound = false,
   },

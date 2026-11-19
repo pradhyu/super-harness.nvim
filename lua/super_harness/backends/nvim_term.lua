@@ -54,7 +54,44 @@ function M.is_in_background(sess)
   return false
 end
 
---- Send Neovim + optional OS desktop notification with per-session cooldown
+--- Open or focus a PTY session window (optionally as a temporary modal layout)
+---@param sess SuperHarnessSession
+---@param opts? { layout?: string, temporary_layout?: boolean, title_prefix?: string, enter_insert?: boolean }
+---@return boolean
+function M.open_session(sess, opts)
+  opts = opts or {}
+  if not sess or not sess.bufnr or not vim.api.nvim_buf_is_valid(sess.bufnr) then
+    return false
+  end
+  state.set_active(sess.id)
+
+  local cur_win = vim.api.nvim_get_current_win()
+  if log.is_code_buffer(vim.api.nvim_win_get_buf(cur_win)) then
+    state.last_code_win = cur_win
+  end
+
+  if window.is_visible(sess) then
+    pcall(vim.api.nvim_set_current_win, sess.winid)
+  else
+    local target_layout = opts.layout or (sess.layout ~= "background" and sess.layout) or config.options.ui.layout
+    if not opts.temporary_layout then
+      sess.layout = target_layout
+    end
+    local prefix = opts.title_prefix or ""
+    local title = string.format("%s%s %s (%s)", prefix, sess.adapter.icon or "󰚩", sess.adapter.label, sess.id)
+    sess.winid = window.open(sess.bufnr, target_layout, title)
+  end
+
+  if sess.winid and vim.api.nvim_win_is_valid(sess.winid) and sess.state ~= "exited" then
+    if opts.enter_insert or config.options.ui.auto_insert then
+      pcall(vim.cmd, "startinsert")
+    end
+  end
+  return sess.winid ~= nil and vim.api.nvim_win_is_valid(sess.winid)
+end
+
+--- Send Neovim + optional clickable OS desktop notification with per-session cooldown,
+--- and optionally auto-pop a modal window when the agent needs permission/attention.
 ---@param sess SuperHarnessSession
 ---@param kind "complete"|"attention"|"error"
 ---@param title string
@@ -84,10 +121,38 @@ function M._notify_session(sess, kind, title, msg, level)
   sess._last_notify[kind] = now_ms
 
   log.notify(msg, level)
+
   if ncfg.desktop ~= false then
     local urgency = (kind == "attention" or kind == "error") and "critical" or "normal"
-    log.desktop_notify(title, msg, { urgency = urgency })
+    local on_click = nil
+    if ncfg.click_action ~= false then
+      on_click = function()
+        if ncfg.focus_terminal_on_click ~= false then
+          log.focus_host_window()
+        end
+        M.open_session(sess, {
+          layout = kind == "attention" and ncfg.attention_layout or nil,
+          temporary_layout = kind == "attention" and ncfg.attention_layout ~= nil,
+          enter_insert = true,
+        })
+      end
+    end
+    log.desktop_notify(title, msg, {
+      urgency = urgency,
+      on_click = on_click,
+      action_label = kind == "attention" and "Approve in Neovim" or "Open in Neovim",
+    })
   end
+
+  if kind == "attention" and ncfg.auto_open_on_attention ~= false then
+    M.open_session(sess, {
+      layout = ncfg.attention_layout or "float",
+      temporary_layout = true,
+      title_prefix = "▲ Permission — ",
+      enter_insert = true,
+    })
+  end
+
   return true
 end
 

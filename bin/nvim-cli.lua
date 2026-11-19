@@ -1432,6 +1432,11 @@ local function main()
   elseif cmd == "notify" then
     local level = "info"
     local title = "Nvim-CLI"
+    local desktop = nil
+    local open_modal = false
+    local attention = false
+    local layout = nil
+    local session = nil
     local msg_parts = {}
 
     local k = 1
@@ -1443,6 +1448,21 @@ local function main()
       elseif a == "--title" or a == "-t" then
         k = k + 1
         title = sub_args[k] or "Nvim-CLI"
+      elseif a == "--desktop" or a == "-d" then
+        desktop = true
+      elseif a == "--no-desktop" then
+        desktop = false
+      elseif a == "--open" or a == "-o" then
+        open_modal = true
+      elseif a == "--attention" or a == "-a" then
+        attention = true
+        level = "warn"
+      elseif a == "--layout" then
+        k = k + 1
+        layout = sub_args[k]
+      elseif a == "--session" then
+        k = k + 1
+        session = sub_args[k]
       else
         table.insert(msg_parts, a)
       end
@@ -1454,7 +1474,15 @@ local function main()
       message = read_stdin()
     end
 
-    local ok, res = rpc_api(chan, "notify", { message, level, { title = title } })
+    local notify_opts = {
+      title = title,
+      desktop = desktop,
+      open = open_modal,
+      attention = attention,
+      layout = layout,
+      session = session,
+    }
+    local ok, res = rpc_api(chan, "notify", { message, level, notify_opts })
     vim.fn.chanclose(chan)
     if not ok then print_err(res); return 1 end
     return 0

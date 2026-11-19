@@ -36,11 +36,59 @@ function M.error(msg)
   M.notify(msg, vim.log.levels.ERROR)
 end
 
+--- Walk /proc/<pid>/stat to collect ancestor PIDs of the current Neovim process (Linux)
+---@return table<integer, boolean>
+local function get_ancestor_pids()
+  local pids = {}
+  local cur = vim.fn.getpid()
+  for _ = 1, 16 do
+    if not cur or cur <= 1 or pids[cur] then
+      break
+    end
+    pids[cur] = true
+    local ok, lines = pcall(vim.fn.readfile, string.format("/proc/%d/stat", cur))
+    if not ok or not lines or not lines[1] then
+      break
+    end
+    -- Format: pid (comm) state ppid ...
+    local rest = lines[1]:match("%)%s+%S+%s+(%d+)")
+    cur = tonumber(rest)
+  end
+  return pids
+end
+
+--- Best-effort focus of the OS terminal window hosting this Neovim instance (Hyprland)
+function M.focus_host_window()
+  if not vim.env.HYPRLAND_INSTANCE_SIGNATURE or vim.env.HYPRLAND_INSTANCE_SIGNATURE == "" then
+    return
+  end
+  if vim.fn.executable("hyprctl") ~= 1 or not vim.system then
+    return
+  end
+  local ancestors = get_ancestor_pids()
+  pcall(vim.system, { "hyprctl", "clients", "-j" }, { text = true, timeout = 2000 }, function(res)
+    if not res or res.code ~= 0 or not res.stdout or res.stdout == "" then
+      return
+    end
+    local ok, clients = pcall(vim.json.decode, res.stdout)
+    if not ok or type(clients) ~= "table" then
+      return
+    end
+    for _, c in ipairs(clients) do
+      if type(c) == "table" and c.pid and ancestors[tonumber(c.pid)] and c.address then
+        pcall(vim.system, { "hyprctl", "dispatch", "focuswindow", "address:" .. tostring(c.address) }, { detach = true })
+        return
+      end
+    end
+  end)
+end
+
 --- Send an asynchronous OS desktop notification (notify-send on Linux, osascript on macOS).
 --- Silently no-ops in headless mode (e.g. unit tests) or if no notifier binary is installed.
+--- When `opts.on_click` is provided on Linux, uses `notify-send -A` so clicking the notification invokes the callback.
 ---@param title string
 ---@param body string
----@param opts? { urgency?: "low"|"normal"|"critical" }
+---@param opts? { urgency?: "low"|"normal"|"critical", on_click?: fun(), action_label?: string }
 function M.desktop_notify(title, body, opts)
   opts = opts or {}
   vim.schedule(function()
@@ -48,21 +96,45 @@ function M.desktop_notify(title, body, opts)
       return
     end
     local urgency = opts.urgency or "normal"
-    local cmd
+    local has_click = type(opts.on_click) == "function"
     if vim.fn.executable("notify-send") == 1 then
-      cmd = { "notify-send", "-a", "SuperHarness", "-u", urgency, tostring(title), tostring(body) }
+      if has_click and vim.system then
+        local label = opts.action_label or "Open in Neovim"
+        local cmd = {
+          "notify-send",
+          "-a",
+          "SuperHarness",
+          "-u",
+          urgency,
+          "-A",
+          "default=" .. tostring(label),
+          tostring(title),
+          tostring(body),
+        }
+        pcall(vim.system, cmd, { text = true }, function(res)
+          if res and res.code == 0 and vim.trim(res.stdout or "") == "default" then
+            vim.schedule(function()
+              pcall(opts.on_click)
+            end)
+          end
+        end)
+        return
+      end
+      local cmd = { "notify-send", "-a", "SuperHarness", "-u", urgency, tostring(title), tostring(body) }
+      if vim.system then
+        pcall(vim.system, cmd, { detach = true })
+      else
+        pcall(vim.fn.jobstart, cmd, { detach = true })
+      end
     elseif vim.fn.executable("osascript") == 1 then
       local esc_title = tostring(title):gsub('"', '\\"')
       local esc_body = tostring(body):gsub('"', '\\"')
-      cmd = { "osascript", "-e", string.format('display notification "%s" with title "%s"', esc_body, esc_title) }
-    end
-    if not cmd then
-      return
-    end
-    if vim.system then
-      pcall(vim.system, cmd, { detach = true })
-    else
-      pcall(vim.fn.jobstart, cmd, { detach = true })
+      local cmd = { "osascript", "-e", string.format('display notification "%s" with title "%s"', esc_body, esc_title) }
+      if vim.system then
+        pcall(vim.system, cmd, { detach = true })
+      else
+        pcall(vim.fn.jobstart, cmd, { detach = true })
+      end
     end
   end)
 end
