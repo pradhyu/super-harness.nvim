@@ -10,25 +10,109 @@ local M = {}
 
 local uv = vim.uv or vim.loop
 
+M._nvim_focused = true
+
+local focus_group = vim.api.nvim_create_augroup("SuperHarnessFocusTrack", { clear = true })
+vim.api.nvim_create_autocmd("FocusLost", {
+  group = focus_group,
+  callback = function()
+    M._nvim_focused = false
+  end,
+})
+vim.api.nvim_create_autocmd("FocusGained", {
+  group = focus_group,
+  callback = function()
+    M._nvim_focused = true
+  end,
+})
+
 local function emit(pattern, data)
   vim.schedule(function()
     pcall(vim.api.nvim_exec_autocmds, "User", { pattern = pattern, data = data or {} })
   end)
 end
 
+--- Determine whether a session is currently "in the background" per notification policy
+---@param sess SuperHarnessSession
+---@return boolean
+function M.is_in_background(sess)
+  local ncfg = config.options.notifications or {}
+  local when = ncfg.when or "unfocused"
+  if when == "always" then
+    return true
+  end
+  if not M._nvim_focused then
+    return true
+  end
+  if not window.is_visible(sess) then
+    return true
+  end
+  if when == "unfocused" then
+    local cur_win = vim.api.nvim_get_current_win()
+    return cur_win ~= sess.winid
+  end
+  return false
+end
+
+--- Send Neovim + optional OS desktop notification with per-session cooldown
+---@param sess SuperHarnessSession
+---@param kind "complete"|"attention"|"error"
+---@param title string
+---@param msg string
+---@param level integer
+function M._notify_session(sess, kind, title, msg, level)
+  local ncfg = config.options.notifications or {}
+  if not ncfg.enabled then
+    return false
+  end
+  if kind == "complete" and ncfg.notify_on_complete == false then
+    return false
+  end
+  if kind == "attention" and ncfg.notify_on_attention == false then
+    return false
+  end
+  if not M.is_in_background(sess) then
+    return false
+  end
+
+  local now_ms = (uv and uv.now and uv.now()) or (os.time() * 1000)
+  local cooldown = ncfg.cooldown_ms or 3000
+  sess._last_notify = sess._last_notify or {}
+  if sess._last_notify[kind] and (now_ms - sess._last_notify[kind]) < cooldown then
+    return false
+  end
+  sess._last_notify[kind] = now_ms
+
+  log.notify(msg, level)
+  if ncfg.desktop ~= false then
+    local urgency = (kind == "attention" or kind == "error") and "critical" or "normal"
+    log.desktop_notify(title, msg, { urgency = urgency })
+  end
+  return true
+end
+
 local function update_activity(sess, raw_lines)
   if sess.state == "exited" then
     return
   end
+
+  local joined = ""
+  if raw_lines and #raw_lines > 0 then
+    joined = sanitizer.strip_ansi(table.concat(raw_lines, "\n"))
+  end
+  local trimmed = vim.trim(joined)
+
+  -- Ignore pure ANSI/whitespace redraws while already idle to prevent false completion notifications
+  if trimmed == "" and sess.state == "idle" then
+    return
+  end
+
   sess.last_activity = os.time()
 
   -- Run adapter status_detector on stripped output chunk
   local detected = nil
-  if raw_lines and #raw_lines > 0 and type(sess.adapter.status_detector) == "function" then
-    local joined = sanitizer.strip_ansi(table.concat(raw_lines, "\n"))
-    if joined ~= "" then
-      detected = sess.adapter.status_detector(joined)
-    end
+  if trimmed ~= "" and type(sess.adapter.status_detector) == "function" then
+    detected = sess.adapter.status_detector(joined)
   end
 
   local next_state = detected or (sess.state == "idle" and "thinking" or sess.state)
@@ -38,8 +122,16 @@ local function update_activity(sess, raw_lines)
   if next_state ~= sess.state then
     sess.state = next_state
     emit("SuperHarnessState", { id = sess.id, adapter = sess.adapter.name, state = next_state })
-    if next_state == "awaiting_input" and config.options.notifications.enabled and not window.is_visible(sess) then
-      log.warn(string.format("%s %s is awaiting your approval/input!", sess.adapter.icon or "󰚩", sess.id))
+    if next_state == "awaiting_input" then
+      local msg = string.format("%s %s is waiting for your attention/approval", sess.adapter.icon or "󰚩", sess.id)
+      vim.schedule(function()
+        M._notify_session(sess, "attention", "SuperHarness: Attention Needed", msg, vim.log.levels.WARN)
+      end)
+    elseif next_state == "errored" then
+      local msg = string.format("%s %s encountered an error", sess.adapter.icon or "󰚩", sess.id)
+      vim.schedule(function()
+        M._notify_session(sess, "error", "SuperHarness: Agent Error", msg, vim.log.levels.ERROR)
+      end)
     end
   end
 
@@ -55,7 +147,7 @@ local function update_activity(sess, raw_lines)
   local timer = uv and uv.new_timer and uv.new_timer()
   if timer then
     sess.idle_timer = timer
-    timer:start(threshold, 0, function()
+    timer:start(threshold, 0, vim.schedule_wrap(function()
       pcall(function()
         timer:stop()
         timer:close()
@@ -64,11 +156,10 @@ local function update_activity(sess, raw_lines)
       if sess.state ~= "exited" and sess.state ~= "awaiting_input" and sess.state ~= "idle" then
         sess.state = "idle"
         emit("SuperHarnessIdle", { id = sess.id, adapter = sess.adapter.name })
-        if config.options.notifications.enabled and config.options.notifications.notify_on_complete and not window.is_visible(sess) then
-          log.info(string.format("%s %s finished its turn", sess.adapter.icon or "󰚩", sess.id))
-        end
+        local msg = string.format("%s %s finished its turn", sess.adapter.icon or "󰚩", sess.id)
+        M._notify_session(sess, "complete", "SuperHarness: Agent Done", msg, vim.log.levels.INFO)
       end
-    end)
+    end))
   end
 end
 

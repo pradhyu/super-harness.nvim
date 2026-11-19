@@ -36,6 +36,37 @@ function M.error(msg)
   M.notify(msg, vim.log.levels.ERROR)
 end
 
+--- Send an asynchronous OS desktop notification (notify-send on Linux, osascript on macOS).
+--- Silently no-ops in headless mode (e.g. unit tests) or if no notifier binary is installed.
+---@param title string
+---@param body string
+---@param opts? { urgency?: "low"|"normal"|"critical" }
+function M.desktop_notify(title, body, opts)
+  opts = opts or {}
+  vim.schedule(function()
+    if #vim.api.nvim_list_uis() == 0 then
+      return
+    end
+    local urgency = opts.urgency or "normal"
+    local cmd
+    if vim.fn.executable("notify-send") == 1 then
+      cmd = { "notify-send", "-a", "SuperHarness", "-u", urgency, tostring(title), tostring(body) }
+    elseif vim.fn.executable("osascript") == 1 then
+      local esc_title = tostring(title):gsub('"', '\\"')
+      local esc_body = tostring(body):gsub('"', '\\"')
+      cmd = { "osascript", "-e", string.format('display notification "%s" with title "%s"', esc_body, esc_title) }
+    end
+    if not cmd then
+      return
+    end
+    if vim.system then
+      pcall(vim.system, cmd, { detach = true })
+    else
+      pcall(vim.fn.jobstart, cmd, { detach = true })
+    end
+  end)
+end
+
 --- Run a synchronous system command safely
 ---@param cmd string[]
 ---@param opts? { cwd?: string, timeout?: integer }

@@ -73,6 +73,33 @@ local p4, l4 = window.parse_file_ref_in_line("  • Window #1000 — " .. tmp ..
 assert_eq(p4, tmp, "line scan found embedded file:line ref")
 assert_eq(l4, 5, "line scan parsed line 5")
 
+-- Background notifications & attention detection
+local nvim_term = require("super_harness.backends.nvim_term")
+local agy_adapter = adapters.get("antigravity")
+assert_eq(agy_adapter.status_detector("Bypass Sandbox Mode: Always Allow / Deny"), "awaiting_input", "detects approval prompt")
+assert_eq(agy_adapter.status_detector("Waiting for your confirmation"), "awaiting_input", "detects waiting for attention")
+
+local bg_sess = { id = "antigravity#bg", winid = nil, bufnr = nil, adapter = agy_adapter }
+assert_true(nvim_term.is_in_background(bg_sess), "hidden session is in background")
+assert_true(
+  not nvim_term._notify_session(bg_sess, "attention", "SuperHarness", "Needs approval", vim.log.levels.WARN),
+  "respects notifications.enabled = false"
+)
+sh.config.options.notifications.enabled = true
+assert_true(
+  nvim_term._notify_session(bg_sess, "attention", "SuperHarness", "Needs approval", vim.log.levels.WARN),
+  "fires attention notification when hidden"
+)
+assert_true(
+  not nvim_term._notify_session(bg_sess, "attention", "SuperHarness", "Needs approval", vim.log.levels.WARN),
+  "respects per-kind cooldown to prevent spam"
+)
+assert_true(
+  nvim_term._notify_session(bg_sess, "complete", "SuperHarness", "Done", vim.log.levels.INFO),
+  "fires complete notification independently of attention cooldown"
+)
+sh.config.options.notifications.enabled = false
+
 -- Composer @-token expansion, HUD, Review Drawer, Health
 vim.cmd("edit " .. vim.fn.fnameescape(tmp))
 local exp = input.expand_tokens("Fix @file and keep @mention", { adapter = adapters.get("claude"), bufnr = 0 })

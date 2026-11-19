@@ -137,6 +137,10 @@ M.defaults = {
   notifications = {
     enabled = true,
     notify_on_complete = true,
+    notify_on_attention = true,
+    when = "unfocused", -- "unfocused" | "hidden" | "always"
+    desktop = true, -- send OS notification via notify-send / osascript when available
+    cooldown_ms = 3000,
     sound = false,
   },
 

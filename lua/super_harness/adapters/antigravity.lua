@@ -20,7 +20,18 @@ local M = {
 ---@return string|nil
 function M.status_detector(text)
   local lower = (text or ""):lower()
-  if lower:find("approve") or lower:find("permission") or lower:find("%[y/n%]") or lower:find("proceed%?") then
+  if
+    lower:find("approve")
+    or lower:find("permission")
+    or lower:find("always allow")
+    or lower:find("allow once")
+    or lower:find("bypass sandbox")
+    or lower:find("waiting for")
+    or lower:find("press enter")
+    or lower:find("confirm")
+    or lower:find("%[y/n%]")
+    or lower:find("proceed%?")
+  then
     return "awaiting_input"
   end
   if lower:find("error:") or lower:find("fatal:") or lower:find("traceback") then
