@@ -59,8 +59,12 @@ assert_true(sh.cli ~= nil and type(sh.cli.api) == "table", "bundled harness_neov
 assert_eq(vim.fn.exists(":NvimCLI"), 2, ":NvimCLI command registered by bundled RPC layer")
 local bin_dir = sync.get_bin_dir()
 assert_true(bin_dir ~= nil and vim.fn.executable(bin_dir .. "/nvim-cli") == 1, "bundled bin/nvim-cli is executable")
+local orig_path = vim.env.PATH
+vim.env.PATH = "/usr/bin:/bin"
 local env = sync.env_for_session({ id = "antigravity#1", adapter = "antigravity", cwd = tmpdir })
+vim.env.PATH = orig_path
 assert_eq(env.SUPER_HARNESS_ID, "antigravity#1", "env SUPER_HARNESS_ID set")
+assert_eq(env.NVIM_LISTEN_ADDRESS, nil, "NVIM_LISTEN_ADDRESS not injected (avoids nvim -l socket collision)")
 assert_true(env.PATH ~= nil and env.PATH:find(bin_dir, 1, true) ~= nil, "bundled bin/ prepended to session PATH")
 
 vim.fn.delete(tmpdir, "rf")

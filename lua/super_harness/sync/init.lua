@@ -44,7 +44,6 @@ function M.env_for_session(meta)
     local sock = M.get_socket()
     if sock ~= "" then
       env.NVIM = sock
-      env.NVIM_LISTEN_ADDRESS = sock
       env.SUPER_HARNESS_SOCKET = sock
     end
   end

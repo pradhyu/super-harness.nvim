@@ -42,6 +42,10 @@ local function find_socket(specified_server)
     return vim.env.NVIM
   end
 
+  if vim.env.SUPER_HARNESS_SOCKET and vim.env.SUPER_HARNESS_SOCKET ~= "" then
+    return vim.env.SUPER_HARNESS_SOCKET
+  end
+
   if vim.env.NVIM_LISTEN_ADDRESS and vim.env.NVIM_LISTEN_ADDRESS ~= "" then
     return vim.env.NVIM_LISTEN_ADDRESS
   end
