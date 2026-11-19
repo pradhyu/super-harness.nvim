@@ -52,7 +52,7 @@ assert_eq(backends.broadcast("arena test"), 2, "broadcast hit both sessions")
 backends.kill_all()
 assert_eq(#state.list(), 0, "all sessions killed")
 
--- Terminal gf ref parser
+-- Terminal gf/click ref parser
 local tmp = vim.fn.tempname() .. ".lua"
 vim.fn.writefile({ "return 1" }, tmp)
 local sample = "Check `" .. tmp .. ":12:4` and @" .. tmp .. ":L5-L8"
@@ -60,6 +60,18 @@ local p1, l1, c1 = window.parse_file_ref_at(sample, 10, "/tmp")
 assert_eq(p1, tmp, "parsed path:line:col")
 assert_eq(l1, 12, "parsed line 12")
 assert_eq(c1, 4, "parsed col 4")
+
+local p2, l2 = window.parse_file_ref_token("**" .. tmp .. ":37-44**", "/tmp")
+assert_eq(p2, tmp, "parsed markdown bold path:start-end")
+assert_eq(l2, 37, "parsed start line 37 from range")
+
+local p3, l3 = window.parse_file_ref_token("[setup](file://" .. tmp .. "#L10-L20)", "/tmp")
+assert_eq(p3, tmp, "parsed markdown file://#L10-L20 link")
+assert_eq(l3, 10, "parsed line 10 from #L10-L20")
+
+local p4, l4 = window.parse_file_ref_in_line("  • Window #1000 — " .. tmp .. ":5 (buf #39):", "/tmp")
+assert_eq(p4, tmp, "line scan found embedded file:line ref")
+assert_eq(l4, 5, "line scan parsed line 5")
 
 -- Composer @-token expansion, HUD, Review Drawer, Health
 vim.cmd("edit " .. vim.fn.fnameescape(tmp))

@@ -153,6 +153,85 @@ function M.zoom(sess)
   return true
 end
 
+--- Parse a single token (file[:line[:col]], file:start-end, file#L10-L20, file:// URI, markdown link)
+---@param token string
+---@param cwd string
+---@return string|nil path, integer|nil lnum, integer|nil colnum
+function M.parse_file_ref_token(token, cwd)
+  if not token or token == "" then
+    return nil
+  end
+
+  -- Extract URL from markdown link syntax [label](target)
+  local md_target = token:match("%]%(([^%)]+)%)")
+  if md_target and md_target ~= "" then
+    token = md_target
+  end
+
+  token = token:gsub("^[`\"'(%[<@*]+", ""):gsub("[`\"')%]>.,;:*]+$", "")
+  if token == "" then
+    return nil
+  end
+
+  -- Strip file:// URI scheme and decode basic percent-encoding
+  if token:sub(1, 7) == "file://" then
+    token = token:sub(8):gsub("%%(%x%x)", function(hex)
+      return string.char(tonumber(hex, 16))
+    end)
+  end
+
+  local path, lnum, colnum
+  -- #L10-L20 or #L10
+  path, lnum = token:match("^(.+)#L(%d+)%-L?%d+$")
+  if not path then
+    path, lnum = token:match("^(.+)#L(%d+)$")
+  end
+  -- :L10-L20 or :L10
+  if not path then
+    path, lnum = token:match("^([^:]+):L(%d+)%-L?%d+$")
+  end
+  if not path then
+    path, lnum = token:match("^([^:]+):L(%d+)$")
+  end
+  -- :10:5 or :10:5-20:1
+  if not path then
+    path, lnum, colnum = token:match("^([^:]+):(%d+):(%d+)%-%d+:%d+$")
+  end
+  if not path then
+    path, lnum, colnum = token:match("^([^:]+):(%d+):(%d+)$")
+  end
+  -- :10-20
+  if not path then
+    path, lnum = token:match("^([^:]+):(%d+)%-%d+$")
+  end
+  -- :10
+  if not path then
+    path, lnum = token:match("^([^:]+):(%d+)$")
+  end
+  if not path then
+    path = token
+  end
+  if not path or path == "" then
+    return nil
+  end
+
+  local candidates = { path }
+  if cwd and cwd ~= "" then
+    table.insert(candidates, cwd .. "/" .. path)
+  end
+  local nvim_cwd = vim.fn.getcwd()
+  if nvim_cwd and nvim_cwd ~= "" and nvim_cwd ~= cwd then
+    table.insert(candidates, nvim_cwd .. "/" .. path)
+  end
+
+  for _, candidate in ipairs(candidates) do
+    if vim.fn.filereadable(candidate) == 1 then
+      return candidate, tonumber(lnum), tonumber(colnum)
+    end
+  end
+  return nil
+end
+
 --- Parse file[:line[:col]] or @file:L<line> under cursor in harness terminal output
 ---@param line_text string
 ---@param col integer 0-indexed column
@@ -177,34 +256,77 @@ function M.parse_file_ref_at(line_text, col, cwd)
   if not token then
     return nil
   end
+  return M.parse_file_ref_token(token, cwd)
+end
 
-  token = token:gsub("^[`\"'(%[<@]+", ""):gsub("[`\"')%]>.,;]+$", "")
-  local path, lnum, colnum
-  path, lnum = token:match("^([^:]+):L(%d+)")
-  if not path then
-    path, lnum, colnum = token:match("^([^:]+):(%d+):(%d+)$")
-  end
-  if not path then
-    path, lnum = token:match("^([^:]+):(%d+)$")
-  end
-  if not path then
-    path = token
-  end
-  if not path or path == "" then
+--- Scan an entire line for the first readable file reference
+---@param line_text string
+---@param cwd string
+---@return string|nil path, integer|nil lnum, integer|nil colnum
+function M.parse_file_ref_in_line(line_text, cwd)
+  if not line_text or line_text == "" then
     return nil
   end
-
-  local candidate = path
-  if vim.fn.filereadable(candidate) ~= 1 and cwd and cwd ~= "" then
-    candidate = cwd .. "/" .. path
-  end
-  if vim.fn.filereadable(candidate) == 1 then
-    return candidate, tonumber(lnum), tonumber(colnum)
+  for token in line_text:gmatch("%S+") do
+    local path, lnum, colnum = M.parse_file_ref_token(token, cwd)
+    if path then
+      return path, lnum, colnum
+    end
   end
   return nil
 end
 
---- Attach modal-aware smart escape, navigation, hide, zoom, and gf jump keymaps to a terminal buffer
+--- Open a file reference or OSC 8 hyperlink at the given 0-indexed buffer position
+---@param sess SuperHarnessSession
+---@param buf integer
+---@param row0 integer
+---@param col0 integer
+---@param allow_line_fallback? boolean
+---@return boolean
+function M.open_ref_at(sess, buf, row0, col0, allow_line_fallback)
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return false
+  end
+
+  -- Check OSC 8 hyperlink extmarks if present (Neovim 0.10+)
+  local ok_inspect, pos_info = pcall(vim.inspect_pos, buf, row0, col0)
+  if ok_inspect and type(pos_info) == "table" and type(pos_info.extmarks) == "table" then
+    for _, em in ipairs(pos_info.extmarks) do
+      local url = em.opts and em.opts.url
+      if type(url) == "string" and url ~= "" then
+        if url:sub(1, 7) == "file://" then
+          local path, lnum, colnum = M.parse_file_ref_token(url, sess.cwd)
+          if path then
+            vim.cmd("stopinsert")
+            sync.open_file(path, lnum, colnum)
+            pcall(vim.cmd, "normal! zz")
+            return true
+          end
+        elseif url:match("^https?://") and vim.ui and vim.ui.open then
+          vim.ui.open(url)
+          return true
+        end
+      end
+    end
+  end
+
+  local lines = vim.api.nvim_buf_get_lines(buf, row0, row0 + 1, false)
+  local line = lines[1] or ""
+  local path, lnum, colnum = M.parse_file_ref_at(line, col0, sess.cwd)
+  if not path and allow_line_fallback then
+    path, lnum, colnum = M.parse_file_ref_in_line(line, sess.cwd)
+  end
+
+  if path then
+    vim.cmd("stopinsert")
+    sync.open_file(path, lnum, colnum)
+    pcall(vim.cmd, "normal! zz")
+    return true
+  end
+  return false
+end
+
+--- Attach modal-aware smart escape, navigation, hide, zoom, and clickable link/gf keymaps to a terminal buffer
 ---@param sess SuperHarnessSession
 function M.attach_term_keymaps(sess)
   local buf = sess.bufnr
@@ -238,16 +360,37 @@ function M.attach_term_keymaps(sess)
     M.zoom(sess)
   end, vim.tbl_extend("force", opts, { desc = "SuperHarness: Toggle zoom" }))
 
-  vim.keymap.set("n", "gf", function()
-    local line = vim.api.nvim_get_current_line()
-    local col = vim.api.nvim_win_get_cursor(0)[2]
-    local path, lnum, colnum = M.parse_file_ref_at(line, col, sess.cwd)
-    if path then
-      sync.open_file(path, lnum, colnum)
-    else
+  local function open_under_cursor()
+    local cur = vim.api.nvim_win_get_cursor(0)
+    if not M.open_ref_at(sess, buf, cur[1] - 1, cur[2], true) then
       log.info("No readable file reference under cursor.")
     end
-  end, vim.tbl_extend("force", opts, { desc = "SuperHarness: Open file:line in code window" }))
+  end
+
+  vim.keymap.set("n", "gf", open_under_cursor, vim.tbl_extend("force", opts, { desc = "SuperHarness: Open file:line in code window" }))
+  vim.keymap.set("n", "gx", open_under_cursor, vim.tbl_extend("force", opts, { desc = "SuperHarness: Open link/file:line in code window" }))
+
+  local function make_mouse_handler(fallback_key, allow_line_fallback)
+    return function()
+      local m = vim.fn.getmousepos()
+      if m and m.winid and m.winid > 0 and vim.api.nvim_win_is_valid(m.winid) then
+        local clicked_buf = vim.api.nvim_win_get_buf(m.winid)
+        if clicked_buf == buf and m.line and m.line >= 1 then
+          local row0 = m.line - 1
+          local col0 = math.max(0, (m.column or 1) - 1)
+          if M.open_ref_at(sess, buf, row0, col0, allow_line_fallback) then
+            return
+          end
+        end
+      end
+      local keys = vim.api.nvim_replace_termcodes(fallback_key, true, false, true)
+      vim.api.nvim_feedkeys(keys, "n", false)
+    end
+  end
+
+  vim.keymap.set({ "n", "t" }, "<LeftMouse>", make_mouse_handler("<LeftMouse>", false), vim.tbl_extend("force", opts, { desc = "SuperHarness: Click file link to open" }))
+  vim.keymap.set({ "n", "t" }, "<2-LeftMouse>", make_mouse_handler("<2-LeftMouse>", true), vim.tbl_extend("force", opts, { desc = "SuperHarness: Double-click line link to open" }))
+  vim.keymap.set({ "n", "t" }, "<C-LeftMouse>", make_mouse_handler("<C-LeftMouse>", true), vim.tbl_extend("force", opts, { desc = "SuperHarness: Ctrl+click line link to open" }))
 end
 
 return M
