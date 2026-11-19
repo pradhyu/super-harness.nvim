@@ -523,11 +523,11 @@ function M.render()
 
   local footer
   if prompt.kind == "multi_select" then
-    footer = "  j/k Move │ <Space> Toggle │ <CR> Submit │ i Custom │ t Terminal │ <Esc> Cancel │ q Hide"
+    footer = "  j/k/↑↓ Move │ <Space>/1-9 Toggle │ <CR> Submit │ i Custom │ t Terminal │ <Esc> Cancel │ q Hide"
   elseif prompt.kind == "confirm" then
-    footer = "  y Approve │ n Deny │ j/k Move │ <CR> Select │ i Custom │ t Terminal │ <Esc> Cancel"
+    footer = "  y/1 Approve │ n/2 Deny │ j/k/↑↓ Move │ <CR> Select │ i Custom │ t Terminal │ <Esc> Cancel"
   else
-    footer = "  j/k Move │ <CR>/1-9 Select │ i Custom │ t Terminal │ <Esc> Cancel │ q Hide"
+    footer = "  j/k/↑↓ Move │ <CR>/1-9 Select │ i Custom │ t Terminal │ <Esc> Cancel │ q Hide"
   end
   table.insert(lines, footer)
   table.insert(hl_spans, { #lines - 1, 0, -1, "SuperHarnessApprovalHint" })
@@ -673,9 +673,10 @@ function M.open(sess, opts)
     prompt = M.parse_prompt(text or "")
   end
 
-  -- Leave terminal insert mode if currently inside a harness PTY so Neovim popup keymaps work immediately
+  -- Leave terminal/insert/replace mode so Normal-mode popup keymaps (j/k/arrows/1-9/<CR>) work immediately
   local mode = vim.api.nvim_get_mode().mode
-  if mode and mode:sub(1, 1) == "t" then
+  local m1 = mode and mode:sub(1, 1) or ""
+  if m1 == "t" or m1 == "i" or m1 == "R" then
     pcall(vim.cmd, "stopinsert")
   end
 
@@ -746,6 +747,7 @@ function M.open(sess, opts)
     end
   end, "Toggle / Next Option")
   map("<CR>", function() M.confirm_current() end, "Confirm / Submit")
+  map("<kEnter>", function() M.confirm_current() end, "Confirm / Submit")
   map("i", function() M.prompt_custom() end, "Type Custom Response")
   map("o", function() M.prompt_custom() end, "Type Custom Response")
   map("<Esc>", function() M.cancel() end, "Cancel Prompt in Agent")
