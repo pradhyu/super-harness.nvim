@@ -1,0 +1,89 @@
+local sh = require("super_harness")
+local backends = require("super_harness.backends")
+local state = require("super_harness.state")
+local window = require("super_harness.ui.window")
+local input = require("super_harness.ui.input")
+local hud = require("super_harness.ui.hud")
+local diffsplit = require("super_harness.review.diffsplit")
+local health = require("super_harness.health")
+local adapters = require("super_harness.adapters")
+
+local function assert_true(c, m) if not c then error("FAIL: " .. (m or "")) end end
+local function assert_eq(a, b, m) if a ~= b then error(string.format("FAIL: expected %s got %s (%s)", tostring(b), tostring(a), m or "")) end end
+
+local hist_file = vim.fn.tempname() .. "_ui_hist.json"
+sh.setup({
+  project_config = false,
+  ui = { auto_insert = false },
+  sync = { fs_watch = false },
+  notifications = { enabled = false },
+  prompts = { history_file = hist_file },
+  adapters = {
+    mock_cli = {
+      label = "Mock Cat Agent",
+      cmd = { "cat" },
+      submit_delay_ms = 0,
+    },
+  },
+})
+
+-- Spawn, hide, show, zoom, send, broadcast, kill
+local s1, err1 = backends.spawn("mock_cli", { layout = "float", name = "builder" })
+assert_true(s1 ~= nil, "spawned mock_cli: " .. tostring(err1))
+assert_eq(s1.id, "builder", "named session ID preserved")
+assert_true(window.is_visible(s1), "window visible")
+assert_true(sh.statusline():find("builder", 1, true) ~= nil, "statusline shows session")
+
+backends.hide(s1.id)
+assert_true(not window.is_visible(s1), "hidden")
+backends.show(s1.id, "float")
+assert_true(window.is_visible(s1), "shown")
+backends.zoom(s1.id)
+assert_true(s1.zoomed, "zoomed")
+backends.zoom(s1.id)
+assert_true(not s1.zoomed, "unzoomed")
+
+local ok_send = backends.send("ping", { id = s1.id, focus = false })
+assert_true(ok_send, "send succeeded")
+
+local s2 = backends.spawn("mock_cli", { layout = "background", name = "reviewer" })
+assert_true(s2 ~= nil and s2.winid == nil, "background worker spawned without window")
+assert_eq(backends.broadcast("arena test"), 2, "broadcast hit both sessions")
+backends.kill_all()
+assert_eq(#state.list(), 0, "all sessions killed")
+
+-- Terminal gf ref parser
+local tmp = vim.fn.tempname() .. ".lua"
+vim.fn.writefile({ "return 1" }, tmp)
+local sample = "Check `" .. tmp .. ":12:4` and @" .. tmp .. ":L5-L8"
+local p1, l1, c1 = window.parse_file_ref_at(sample, 10, "/tmp")
+assert_eq(p1, tmp, "parsed path:line:col")
+assert_eq(l1, 12, "parsed line 12")
+assert_eq(c1, 4, "parsed col 4")
+
+-- Composer @-token expansion, HUD, Review Drawer, Health
+vim.cmd("edit " .. vim.fn.fnameescape(tmp))
+local exp = input.expand_tokens("Fix @file and keep @mention", { adapter = adapters.get("claude"), bufnr = 0 })
+assert_true(exp:find("@mention", 1, true) ~= nil, "unknown @mention preserved")
+
+hud.open("sessions")
+assert_true(hud._win ~= nil and vim.api.nvim_win_is_valid(hud._win), "HUD opened")
+hud._tab = "tray"; hud.render()
+hud._tab = "review"; hud.render()
+hud.close()
+
+diffsplit.open()
+assert_true(diffsplit._win ~= nil and vim.api.nvim_win_is_valid(diffsplit._win), "Review drawer opened")
+diffsplit.close()
+
+assert_true(pcall(health.check), "health.check passes")
+assert_eq(vim.fn.exists(":SuperHarness"), 2, ":SuperHarness command exists")
+assert_eq(vim.fn.exists(":SuperHarnessReload"), 2, ":SuperHarnessReload command exists")
+
+-- Hot-reload test
+local reloaded = sh.reload()
+assert_true(reloaded._initialized == true, ":SuperHarnessReload re-initialized cleanly")
+
+vim.fn.delete(tmp)
+vim.fn.delete(hist_file)
+print("🎉 ALL BACKENDS & UI TESTS PASSED!")

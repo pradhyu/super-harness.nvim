@@ -1,0 +1,98 @@
+*super-harness.txt*  Universal Neovim Harness & Orchestrator for CLI AI Agents
+
+==============================================================================
+CONTENTS                                              *super-harness-contents*
+
+  1. Introduction ................................. |super-harness-intro|
+  2. Configuration ................................ |super-harness-config|
+  3. Commands ..................................... |super-harness-commands|
+  4. Keymaps ...................................... |super-harness-keymaps|
+  5. Statusline & Health .......................... |super-harness-statusline|
+
+==============================================================================
+1. INTRODUCTION                                          *super-harness-intro*
+
+`super-harness.nvim` is a universal, agent-agnostic Neovim orchestrator for
+CLI-based AI coding agents (Google Antigravity `agy`, Claude Code `claude`,
+Aider, Goose, Codex, Gemini CLI, OpenCode, Amp, Copilot CLI, Kiro, Cursor
+Agent, Cline, Pi, or any custom CLI).
+
+==============================================================================
+2. CONFIGURATION                                        *super-harness-config*
+
+Call `require("super_harness").setup(opts)` in your Neovim config: >lua
+
+  require("super_harness").setup({
+    default_adapter = nil, -- nil = auto-detect first installed CLI agent
+    backend = "nvim_term", -- "nvim_term" | "tmux" | "zellij"
+    ui = {
+      layout = "drawer",   -- "drawer" | "bottom" | "float" | "tab" | "background" | "detached"
+    },
+    sync = {
+      auto_save_on_send = true,
+      silent_autoread = true,
+      fs_watch = true,
+      conflict_action = "diff",
+    },
+  })
+<
+
+==============================================================================
+3. COMMANDS                                           *super-harness-commands*
+
+                                                               *:SuperHarness*
+:SuperHarness [subcommand] [args...]
+  Unified command router:
+  - `toggle [adapter] [layout]`   Toggle active or named agent window
+  - `open [adapter] [layout]`     Spawn a new agent session
+  - `resume [adapter]`            Resume previous session with native flags
+  - `send [text]`                 Send text (or open Prompt Composer if empty)
+  - `send-context [kind]`         Send file/selection/scope/diagnostics/diff/tray
+  - `compose`                     Open Floating Markdown Prompt Composer
+  - `prompt`                      Open Prompt Library template picker
+  - `history`                     Open Frecency Prompt History picker
+  - `broadcast [text]`            Send prompt to all running sessions (Arena)
+  - `tray [show|add|clear|send]`  Manage Context Tray
+  - `review`                      Open Change Review & Diff Inspector
+  - `quickfix`                    Populate quickfix with modified files
+  - `comment`                     Add PR-style inline review comment
+  - `dispatch-comments`           Dispatch all queued review comments
+  - `sessions`                    Switch between active/background sessions
+  - `pick`                        Pick and launch any registered agent
+  - `hud [sessions|tray|review]`  Open 3-tab Control Center HUD
+  - `slash`                       Pick active agent's slash command
+  - `zoom`                        Toggle fullscreen zoom
+  - `kill [id|all]`               Terminate session(s)
+  - `status`                      Show status summary
+  - `reload`                      Hot-reload plugin
+
+                                                         *:SuperHarnessReload*
+:SuperHarnessReload
+  Unloads `super_harness.*` modules, stops libuv watchers, closes sessions,
+  and re-applies configuration without restarting Neovim.
+
+==============================================================================
+4. KEYMAPS                                             *super-harness-keymaps*
+
+Default `<leader>a` namespace mappings (configurable via `opts.keymaps`):
+  `<leader>aa`  Toggle active agent        `<leader>aA`  Toggle float agent
+  `<leader>an`  New named session          `<leader>aS`  Switch session
+  `<leader>ah`  3-tab Control Center HUD   `<leader>ap`  Prompt Composer
+  `<leader>as`  Send selection / scope     `<leader>af`  Send current file
+  `<leader>ad`  Send LSP diagnostics       `<leader>aD`  Send git diff
+  `<leader>at`  Stage to Context Tray      `<leader>aT`  Open Context Tray
+  `<leader>al`  Prompt Library             `<leader>aH`  Frecency History
+  `<leader>ab`  Broadcast (Arena Mode)     `<leader>ar`  Review changes
+  `<leader>ac`  Add inline review comment  `<leader>aC`  Dispatch comments
+  `<leader>a/`  Agent slash commands       `<leader>aR`  Resume session
+  `<leader>az`  Toggle fullscreen zoom     `<leader>ax`  Kill active session
+  `]f` / `[f`   Next / Prev changed file   `gf` (term)   Open file:line in code
+
+==============================================================================
+5. STATUSLINE & HEALTH                              *super-harness-statusline*
+
+Use `require("super_harness").statusline()` in Lualine, Heirline, or
+Mini.statusline. Run `:checkhealth super_harness` to verify installed agents,
+git, tmux/zellij backends, and RPC bridge status.
+
+vim:tw=78:ts=8:ft=help:norl:
