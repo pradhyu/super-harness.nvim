@@ -36,6 +36,7 @@ function M.setup(sh)
   bind("n", km.new_session, function() sh.new_session() end, "New Named Agent Session")
   bind("n", km.select_session, function() sh.pick_session() end, "Select / Switch Session")
   bind("n", km.hud, function() sh.hud() end, "Control Center HUD")
+  bind("n", km.qa_transcript, function() sh.transcript() end, "Collapsible Q&A Transcript")
 
   bind("n", km.compose, function() sh.compose() end, "Prompt Composer")
   bind("v", km.compose, visual_wrapper(function(r) sh.compose(r) end), "Compose with Selection")

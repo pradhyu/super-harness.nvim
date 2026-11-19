@@ -184,6 +184,10 @@ function M.send(text, opts)
   end
 
   sess.last_prompt = log.truncate(final_text:gsub("\n", " "), 120)
+  local ok_tr, transcript = pcall(require, "super_harness.ui.transcript")
+  if ok_tr and transcript.record_question then
+    transcript.record_question(sess, final_text)
+  end
   if opts.record_history ~= false then
     context.record_history(final_text, sess.adapter.name)
   end

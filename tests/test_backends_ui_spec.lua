@@ -78,6 +78,16 @@ local nvim_term = require("super_harness.backends.nvim_term")
 local agy_adapter = adapters.get("antigravity")
 assert_eq(agy_adapter.status_detector("Bypass Sandbox Mode: Always Allow / Deny"), "awaiting_input", "detects approval prompt")
 assert_eq(agy_adapter.status_detector("Waiting for your confirmation"), "awaiting_input", "detects waiting for attention")
+assert_eq(
+  agy_adapter.status_detector("1. Option A\n2. Option B\n3. Other\n↑/↓ to navigate · Enter to select · Esc to cancel"),
+  "awaiting_input",
+  "detects interactive ask_question selector prompt"
+)
+assert_eq(
+  agy_adapter.status_detector("Question 1/2\nSelect all that apply\nSpace to toggle · Enter to submit"),
+  "awaiting_input",
+  "detects multi-select ask_question prompt"
+)
 
 local bg_sess = { id = "antigravity#bg", winid = nil, bufnr = nil, adapter = agy_adapter }
 assert_true(nvim_term.is_in_background(bg_sess), "hidden session is in background")
@@ -116,6 +126,34 @@ local win_cfg = vim.api.nvim_win_get_config(modal_sess.winid)
 assert_eq(win_cfg.relative, "editor", "attention modal opened as floating window")
 backends.kill(modal_sess.id)
 
+-- Rendered-screen TUI attention detection & non-sticky recovery
+local tui_buf = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_lines(tui_buf, 0, -1, false, {
+  "Test popup question for super-harness.nvim:",
+  "  1. (Recommended) Popup appeared while hidden",
+  "  2. Other",
+  "  ↑/↓ navigate · Enter to select · Esc to cancel",
+  "",
+  "",
+})
+local tui_sess = {
+  id = "antigravity#tui",
+  bufnr = tui_buf,
+  winid = nil,
+  layout = "drawer",
+  state = "thinking",
+  adapter = agy_adapter,
+}
+assert_eq(nvim_term._check_rendered_screen(tui_sess), "awaiting_input", "detects ask_question from rendered buffer tail")
+assert_eq(tui_sess.state, "awaiting_input", "transitions session state to awaiting_input")
+assert_true(window.is_visible(tui_sess), "auto-opened floating modal from rendered ask_question")
+window.hide(tui_sess)
+-- Once user answers and prompt disappears from screen, state recovers from awaiting_input
+vim.api.nvim_buf_set_lines(tui_buf, 0, -1, false, { "Received your answer.", "Ready for next prompt." })
+assert_eq(nvim_term._check_rendered_screen(tui_sess), nil, "clears awaiting_input when prompt leaves screen")
+assert_eq(tui_sess.state, "thinking", "recovers state so future prompts can notify again")
+pcall(vim.api.nvim_buf_delete, tui_buf, { force = true })
+
 sh.config.options.notifications.enabled = false
 
 -- Composer @-token expansion, HUD, Review Drawer, Health
@@ -132,6 +170,74 @@ hud.close()
 diffsplit.open()
 assert_true(diffsplit._win ~= nil and vim.api.nvim_win_is_valid(diffsplit._win), "Review drawer opened")
 diffsplit.close()
+
+-- Collapsible Q&A Transcript tests
+local transcript = require("super_harness.ui.transcript")
+local tmp_jsonl = vim.fn.tempname() .. ".jsonl"
+vim.fn.writefile({
+  vim.json.encode({
+    type = "USER_INPUT",
+    content = "<USER_REQUEST>\nHow do I fold Q&A turns?\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\ntime\n</ADDITIONAL_METADATA>",
+    created_at = "2026-11-19T06:00:00Z",
+  }),
+  vim.json.encode({
+    type = "PLANNER_RESPONSE",
+    content = "Press <CR> or za to collapse and expand turns.",
+    created_at = "2026-11-19T06:00:02Z",
+  }),
+  vim.json.encode({
+    type = "USER_INPUT",
+    content = "<USER_REQUEST>\nHow do I filter by topic?\n</USER_REQUEST>",
+    created_at = "2026-11-19T06:01:00Z",
+  }),
+  vim.json.encode({
+    type = "PLANNER_RESPONSE",
+    content = "Press f and type a keyword to focus on related turns.",
+    created_at = "2026-11-19T06:01:03Z",
+  }),
+}, tmp_jsonl)
+
+local parsed_turns = transcript.parse_antigravity_jsonl(tmp_jsonl)
+assert_eq(#parsed_turns, 2, "parsed 2 turns from Antigravity transcript.jsonl")
+assert_eq(parsed_turns[1].question, "How do I fold Q&A turns?", "extracted clean USER_REQUEST 1")
+assert_true(parsed_turns[1].answer:find("za", 1, true) ~= nil, "extracted PLANNER_RESPONSE 1")
+
+transcript.open({ transcript_path = tmp_jsonl })
+assert_true(transcript.is_open(), "Collapsible Q&A transcript window opened")
+assert_eq(#transcript._visible_turns, 2, "2 visible turns rendered")
+
+-- Collapse single turn
+transcript.set_collapsed(1, true)
+assert_true(transcript._visible_turns[1].collapsed == true, "turn 1 collapsed")
+assert_true(transcript._visible_turns[2].collapsed == false, "turn 2 remains expanded")
+local lines_after_collapse = vim.api.nvim_buf_get_lines(transcript._buf, 0, -1, false)
+local joined_collapsed = table.concat(lines_after_collapse, "\n")
+assert_true(joined_collapsed:find("▸ %[Q1%]") ~= nil, "collapsed turn 1 renders ▸ icon")
+assert_true(joined_collapsed:find("▾ %[Q2%]") ~= nil, "expanded turn 2 renders ▾ icon")
+
+-- Focus mode + pin
+transcript.toggle_pin(1)
+assert_true(transcript._visible_turns[1].pinned == true, "turn 1 pinned")
+transcript.focus_turn(2)
+assert_true(transcript._visible_turns[2].collapsed == false, "focused turn 2 expanded")
+assert_true(transcript._visible_turns[1].collapsed == false, "pinned turn 1 stays expanded during focus")
+
+-- Collapse all & expand all
+transcript.collapse_all()
+assert_true(transcript._visible_turns[2].collapsed == true, "unpinned turn 2 collapsed on collapse_all")
+transcript.expand_all()
+assert_true(transcript._visible_turns[1].collapsed == false and transcript._visible_turns[2].collapsed == false, "all turns expanded")
+
+-- Keyword filter
+transcript.set_filter("keyword")
+assert_eq(#transcript._visible_turns, 1, "filter narrows to 1 matching turn")
+assert_eq(transcript._visible_turns[1].id, 2, "matching turn is Q2")
+transcript.set_filter(nil)
+assert_eq(#transcript._visible_turns, 2, "clearing filter restores all turns")
+
+transcript.close()
+assert_true(not transcript.is_open(), "transcript closed cleanly")
+vim.fn.delete(tmp_jsonl)
 
 assert_true(pcall(health.check), "health.check passes")
 assert_eq(vim.fn.exists(":SuperHarness"), 2, ":SuperHarness command exists")

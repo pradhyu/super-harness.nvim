@@ -148,12 +148,79 @@ function M._notify_session(sess, kind, title, msg, level)
     M.open_session(sess, {
       layout = ncfg.attention_layout or "float",
       temporary_layout = true,
-      title_prefix = "▲ Permission — ",
+      title_prefix = "▲ Attention — ",
       enter_insert = true,
     })
   end
 
   return true
+end
+
+--- Read the last N non-empty rendered lines from a session's terminal buffer.
+--- Full-screen TUIs (Ink/React/Bubbletea) use cursor-positioning ANSI escapes that split
+--- or concatenate raw on_stdout chunks; inspecting the libvterm-rendered buffer gives clean text.
+---@param sess SuperHarnessSession
+---@param max_lines? integer
+---@return string
+function M._get_rendered_tail(sess, max_lines)
+  if not sess or not sess.bufnr or not vim.api.nvim_buf_is_valid(sess.bufnr) then
+    return ""
+  end
+  local limit = max_lines or 18
+  local total = vim.api.nvim_buf_line_count(sess.bufnr)
+  if total <= 0 then
+    return ""
+  end
+  local scan_start = math.max(0, total - math.max(limit * 3, 60))
+  local lines = vim.api.nvim_buf_get_lines(sess.bufnr, scan_start, total, false)
+  local non_empty = {}
+  for i = #lines, 1, -1 do
+    local line = vim.trim(lines[i] or "")
+    if line ~= "" then
+      table.insert(non_empty, 1, line)
+      if #non_empty >= limit then
+        break
+      end
+    end
+  end
+  return table.concat(non_empty, "\n")
+end
+
+--- Inspect the rendered terminal tail for interactive prompts/questions that may have been
+--- split across raw on_stdout chunks or obscured by cursor-positioning ANSI codes.
+---@param sess SuperHarnessSession
+---@return string|nil
+function M._check_rendered_screen(sess)
+  if not sess or sess.state == "exited" or type(sess.adapter.status_detector) ~= "function" then
+    return nil
+  end
+  local tail = M._get_rendered_tail(sess, 18)
+  if tail == "" then
+    return nil
+  end
+  local screen_state = sess.adapter.status_detector(tail)
+  if screen_state == "awaiting_input" then
+    if sess.state ~= "awaiting_input" then
+      sess.state = "awaiting_input"
+      emit("SuperHarnessState", { id = sess.id, adapter = sess.adapter.name, state = "awaiting_input" })
+      local msg = string.format("%s %s is waiting for your attention/input", sess.adapter.icon or "󰚩", sess.id)
+      M._notify_session(sess, "attention", "SuperHarness: Attention Needed", msg, vim.log.levels.WARN)
+    end
+  elseif sess.state == "awaiting_input" then
+    -- Interactive prompt is no longer visible at the bottom of the terminal
+    sess.state = screen_state or "thinking"
+    emit("SuperHarnessState", { id = sess.id, adapter = sess.adapter.name, state = sess.state })
+  end
+  return screen_state
+end
+
+local function stop_timer(timer)
+  if timer then
+    pcall(function()
+      timer:stop()
+      timer:close()
+    end)
+  end
 end
 
 local function update_activity(sess, raw_lines)
@@ -173,6 +240,13 @@ local function update_activity(sess, raw_lines)
   end
 
   sess.last_activity = os.time()
+
+  if trimmed ~= "" and sess._active_turn then
+    local ok_tr, transcript = pcall(require, "super_harness.ui.transcript")
+    if ok_tr and transcript.append_answer then
+      transcript.append_answer(sess, trimmed)
+    end
+  end
 
   -- Run adapter status_detector on stripped output chunk
   local detected = nil
@@ -200,30 +274,56 @@ local function update_activity(sess, raw_lines)
     end
   end
 
-  -- Debounced transition back to idle
-  if sess.idle_timer then
-    pcall(function()
-      sess.idle_timer:stop()
-      sess.idle_timer:close()
-    end)
-    sess.idle_timer = nil
+  -- Debounced rendered-screen inspection for full-screen TUIs (handles split chunks & cursor-move ANSI)
+  stop_timer(sess.screen_check_timer)
+  sess.screen_check_timer = nil
+  local screen_timer = uv and uv.new_timer and uv.new_timer()
+  if screen_timer then
+    sess.screen_check_timer = screen_timer
+    screen_timer:start(120, 0, vim.schedule_wrap(function()
+      stop_timer(screen_timer)
+      if sess.screen_check_timer == screen_timer then
+        sess.screen_check_timer = nil
+      end
+      M._check_rendered_screen(sess)
+    end))
   end
+
+  -- Debounced transition back to idle
+  stop_timer(sess.idle_timer)
+  sess.idle_timer = nil
   local threshold = config.options.session.idle_threshold_ms or 2500
   local timer = uv and uv.new_timer and uv.new_timer()
   if timer then
     sess.idle_timer = timer
     timer:start(threshold, 0, vim.schedule_wrap(function()
-      pcall(function()
-        timer:stop()
-        timer:close()
-      end)
-      sess.idle_timer = nil
-      if sess.state ~= "exited" and sess.state ~= "awaiting_input" and sess.state ~= "idle" then
-        sess.state = "idle"
-        emit("SuperHarnessIdle", { id = sess.id, adapter = sess.adapter.name })
-        local msg = string.format("%s %s finished its turn", sess.adapter.icon or "󰚩", sess.id)
-        M._notify_session(sess, "complete", "SuperHarness: Agent Done", msg, vim.log.levels.INFO)
+      stop_timer(timer)
+      if sess.idle_timer == timer then
+        sess.idle_timer = nil
       end
+      if sess.state == "exited" or sess.state == "idle" then
+        return
+      end
+      if sess.state == "awaiting_input" then
+        -- Only remain awaiting_input if the rendered bottom viewport still displays a prompt
+        local tail = M._get_rendered_tail(sess, 18)
+        local still_waiting = tail ~= ""
+          and type(sess.adapter.status_detector) == "function"
+          and sess.adapter.status_detector(tail) == "awaiting_input"
+        if not still_waiting then
+          sess.state = "idle"
+          emit("SuperHarnessIdle", { id = sess.id, adapter = sess.adapter.name })
+        end
+        return
+      end
+      sess.state = "idle"
+      local ok_tr, transcript = pcall(require, "super_harness.ui.transcript")
+      if ok_tr and transcript.finish_turn then
+        transcript.finish_turn(sess)
+      end
+      emit("SuperHarnessIdle", { id = sess.id, adapter = sess.adapter.name })
+      local msg = string.format("%s %s finished its turn", sess.adapter.icon or "󰚩", sess.id)
+      M._notify_session(sess, "complete", "SuperHarness: Agent Done", msg, vim.log.levels.INFO)
     end))
   end
 end
@@ -267,6 +367,7 @@ function M.spawn(adapter, opts)
     started_at = os.time(),
     last_activity = os.time(),
     last_prompt = "",
+    turns = {},
     zoomed = false,
   }
 
@@ -278,13 +379,10 @@ function M.spawn(adapter, opts)
     end,
     on_exit = function(_, code)
       sess.state = "exited"
-      if sess.idle_timer then
-        pcall(function()
-          sess.idle_timer:stop()
-          sess.idle_timer:close()
-        end)
-        sess.idle_timer = nil
-      end
+      stop_timer(sess.screen_check_timer)
+      sess.screen_check_timer = nil
+      stop_timer(sess.idle_timer)
+      sess.idle_timer = nil
       emit("SuperHarnessExited", { id = sess.id, adapter = sess.adapter.name, code = code })
       if adapter.exit_action == "close" then
         vim.schedule(function()
@@ -361,13 +459,10 @@ end
 --- Kill a Neovim PTY session cleanly
 ---@param sess SuperHarnessSession
 function M.kill(sess)
-  if sess.idle_timer then
-    pcall(function()
-      sess.idle_timer:stop()
-      sess.idle_timer:close()
-    end)
-    sess.idle_timer = nil
-  end
+  stop_timer(sess.screen_check_timer)
+  sess.screen_check_timer = nil
+  stop_timer(sess.idle_timer)
+  sess.idle_timer = nil
   if sess.job_id and sess.state ~= "exited" then
     pcall(vim.fn.jobstop, sess.job_id)
   end

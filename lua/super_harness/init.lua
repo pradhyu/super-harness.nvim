@@ -11,6 +11,7 @@ local quickfix = require("super_harness.review.quickfix")
 local picker = require("super_harness.ui.picker")
 local input = require("super_harness.ui.input")
 local hud = require("super_harness.ui.hud")
+local transcript = require("super_harness.ui.transcript")
 local statusline = require("super_harness.ui.statusline")
 local keymaps = require("super_harness.utils.keymaps")
 
@@ -49,6 +50,7 @@ function M.reload()
   pcall(backends.kill_all)
   pcall(sync.teardown)
   pcall(hud.close)
+  pcall(transcript.close)
   pcall(input.close)
   pcall(diffsplit.close)
   state.reset()
@@ -275,6 +277,14 @@ end
 
 function M.hud(tab)
   hud.open(tab)
+end
+
+function M.transcript(opts)
+  return transcript.toggle(opts)
+end
+
+function M.qa(opts)
+  return transcript.toggle(opts)
 end
 
 function M.statusline()

@@ -43,6 +43,7 @@ M.defaults = {
     },
     winblend = 0,
     auto_insert = true,
+    transcript_default_collapsed = false, -- start Q&A transcript turns collapsed for compact overview
     picker = "auto", -- "auto" | "snacks" | "telescope" | "select"
     icons = {
       harness = "󰚩",
@@ -65,6 +66,7 @@ M.defaults = {
     new_session = "<leader>an",
     select_session = "<leader>aS",
     hud = "<leader>ah",
+    qa_transcript = "<leader>aq",
     compose = "<leader>ap",
     send_selection = "<leader>as",
     send_file = "<leader>af",
