@@ -12,6 +12,7 @@ local picker = require("super_harness.ui.picker")
 local input = require("super_harness.ui.input")
 local hud = require("super_harness.ui.hud")
 local transcript = require("super_harness.ui.transcript")
+local approval = require("super_harness.ui.approval")
 local statusline = require("super_harness.ui.statusline")
 local keymaps = require("super_harness.utils.keymaps")
 
@@ -51,6 +52,7 @@ function M.reload()
   pcall(sync.teardown)
   pcall(hud.close)
   pcall(transcript.close)
+  pcall(approval.close)
   pcall(input.close)
   pcall(diffsplit.close)
   state.reset()
@@ -285,6 +287,10 @@ end
 
 function M.qa(opts)
   return transcript.toggle(opts)
+end
+
+function M.approval(opts)
+  return approval.open(nil, opts)
 end
 
 function M.statusline()

@@ -90,8 +90,29 @@ function M.open_session(sess, opts)
   return sess.winid ~= nil and vim.api.nvim_win_is_valid(sess.winid)
 end
 
+--- Open the configured attention UI (native Neovim popup or raw terminal modal)
+---@param sess SuperHarnessSession
+---@return boolean
+function M._open_attention_ui(sess)
+  local ncfg = config.options.notifications or {}
+  local style = ncfg.attention_style or "neovim"
+  if style == "neovim" then
+    local ok_ap, approval = pcall(require, "super_harness.ui.approval")
+    if ok_ap and approval.open then
+      local win = approval.open(sess)
+      return win ~= nil and vim.api.nvim_win_is_valid(win)
+    end
+  end
+  return M.open_session(sess, {
+    layout = ncfg.attention_layout or "float",
+    temporary_layout = true,
+    title_prefix = "▲ Attention — ",
+    enter_insert = true,
+  })
+end
+
 --- Send Neovim + optional clickable OS desktop notification with per-session cooldown,
---- and optionally auto-pop a modal window when the agent needs permission/attention.
+--- and optionally auto-pop a Neovim-style approval popup (or terminal modal) when the agent needs permission/attention.
 ---@param sess SuperHarnessSession
 ---@param kind "complete"|"attention"|"error"
 ---@param title string
@@ -108,7 +129,14 @@ function M._notify_session(sess, kind, title, msg, level)
   if kind == "attention" and ncfg.notify_on_attention == false then
     return false
   end
-  if not M.is_in_background(sess) then
+
+  local in_bg = M.is_in_background(sess)
+  local attention_style = ncfg.attention_style or "neovim"
+  local show_neovim_popup = (kind == "attention")
+    and (ncfg.auto_open_on_attention ~= false)
+    and (attention_style == "neovim")
+
+  if not in_bg and not show_neovim_popup then
     return false
   end
 
@@ -120,37 +148,38 @@ function M._notify_session(sess, kind, title, msg, level)
   end
   sess._last_notify[kind] = now_ms
 
-  log.notify(msg, level)
+  if in_bg then
+    log.notify(msg, level)
 
-  if ncfg.desktop ~= false then
-    local urgency = (kind == "attention" or kind == "error") and "critical" or "normal"
-    local on_click = nil
-    if ncfg.click_action ~= false then
-      on_click = function()
-        if ncfg.focus_terminal_on_click ~= false then
-          log.focus_host_window()
+    if ncfg.desktop ~= false then
+      local urgency = (kind == "attention" or kind == "error") and "critical" or "normal"
+      local on_click = nil
+      if ncfg.click_action ~= false then
+        on_click = function()
+          if ncfg.focus_terminal_on_click ~= false then
+            log.focus_host_window()
+          end
+          if kind == "attention" and attention_style == "neovim" then
+            M._open_attention_ui(sess)
+          else
+            M.open_session(sess, {
+              layout = kind == "attention" and ncfg.attention_layout or nil,
+              temporary_layout = kind == "attention" and ncfg.attention_layout ~= nil,
+              enter_insert = true,
+            })
+          end
         end
-        M.open_session(sess, {
-          layout = kind == "attention" and ncfg.attention_layout or nil,
-          temporary_layout = kind == "attention" and ncfg.attention_layout ~= nil,
-          enter_insert = true,
-        })
       end
+      log.desktop_notify(title, msg, {
+        urgency = urgency,
+        on_click = on_click,
+        action_label = kind == "attention" and "Approve in Neovim" or "Open in Neovim",
+      })
     end
-    log.desktop_notify(title, msg, {
-      urgency = urgency,
-      on_click = on_click,
-      action_label = kind == "attention" and "Approve in Neovim" or "Open in Neovim",
-    })
   end
 
   if kind == "attention" and ncfg.auto_open_on_attention ~= false then
-    M.open_session(sess, {
-      layout = ncfg.attention_layout or "float",
-      temporary_layout = true,
-      title_prefix = "▲ Attention — ",
-      enter_insert = true,
-    })
+    M._open_attention_ui(sess)
   end
 
   return true
@@ -209,6 +238,10 @@ function M._check_rendered_screen(sess)
   elseif sess.state == "awaiting_input" then
     -- Interactive prompt is no longer visible at the bottom of the terminal
     sess.state = screen_state or "thinking"
+    local ok_ap, approval = pcall(require, "super_harness.ui.approval")
+    if ok_ap and approval.is_open() and approval._sess == sess then
+      approval.close()
+    end
     emit("SuperHarnessState", { id = sess.id, adapter = sess.adapter.name, state = sess.state })
   end
   return screen_state

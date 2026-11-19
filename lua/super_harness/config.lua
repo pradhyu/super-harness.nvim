@@ -140,8 +140,9 @@ M.defaults = {
     enabled = true,
     notify_on_complete = true,
     notify_on_attention = true,
-    auto_open_on_attention = true, -- Automatically pop open the agent window when it needs permission/input
-    attention_layout = "float", -- Layout used when auto-opening a hidden session ("float" | "drawer" | "bottom" | "tab" | nil)
+    auto_open_on_attention = true, -- Automatically pop open a prompt/window when the agent needs permission/input
+    attention_style = "neovim", -- "neovim" (native Neovim floating popup) | "terminal" (open raw harness PTY)
+    attention_layout = "float", -- Layout used when attention_style == "terminal" ("float" | "drawer" | "bottom" | "tab" | nil)
     when = "unfocused", -- "unfocused" | "hidden" | "always"
     desktop = true, -- send OS notification via notify-send / osascript when available
     click_action = true, -- clickable desktop notifications (notify-send -A) to open/focus the session

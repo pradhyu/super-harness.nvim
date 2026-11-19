@@ -27,6 +27,7 @@ local SUBCOMMANDS = {
   "hud",
   "qa",
   "transcript",
+  "approval",
   "slash",
   "zoom",
   "kill",
@@ -104,6 +105,8 @@ vim.api.nvim_create_user_command("SuperHarness", function(opts)
     sh.hud(fargs[2])
   elseif sub == "qa" or sub == "transcript" then
     sh.transcript({ filter = fargs[2] })
+  elseif sub == "approval" or sub == "approve" then
+    sh.approval()
   elseif sub == "slash" then
     sh.pick_slash()
   elseif sub == "zoom" then

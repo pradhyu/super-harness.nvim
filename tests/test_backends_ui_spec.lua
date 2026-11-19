@@ -109,29 +109,69 @@ assert_true(
   "fires complete notification independently of attention cooldown"
 )
 
--- Auto-open modal float on attention while preserving original session layout
+-- Auto-open modal float on attention (terminal style) while preserving original session layout
 local modal_sess = backends.spawn("mock_cli", { layout = "drawer", name = "modal_test" })
 assert_true(modal_sess ~= nil, "spawned modal_test")
 backends.hide(modal_sess.id)
 assert_true(not window.is_visible(modal_sess), "modal_test hidden before attention")
 sh.config.options.notifications.auto_open_on_attention = true
+sh.config.options.notifications.attention_style = "terminal"
 sh.config.options.notifications.attention_layout = "float"
 assert_true(
   nvim_term._notify_session(modal_sess, "attention", "SuperHarness", "Approve?", vim.log.levels.WARN),
   "fires attention notification for real session"
 )
-assert_true(window.is_visible(modal_sess), "auto-opened modal window on attention")
+assert_true(window.is_visible(modal_sess), "auto-opened modal window on attention (terminal style)")
 assert_eq(modal_sess.layout, "drawer", "preserved original session layout after temporary modal")
 local win_cfg = vim.api.nvim_win_get_config(modal_sess.winid)
 assert_eq(win_cfg.relative, "editor", "attention modal opened as floating window")
 backends.kill(modal_sess.id)
 
--- Rendered-screen TUI attention detection & non-sticky recovery
+-- Default Neovim-style native approval popup (not inside raw harness terminal)
+local approval = require("super_harness.ui.approval")
+sh.config.options.notifications.attention_style = "neovim"
+
+local parsed_single = approval.parse_prompt(table.concat({
+  "Approval test harness: would you like to approve this test action?",
+  "  ❯ 1. (Recommended) Approve test action",
+  "    2. Deny test action",
+  "    3. Other",
+  "  ↑/↓ navigate · Enter to select · Esc to cancel",
+}, "\n"))
+assert_eq(parsed_single.kind, "select", "parsed single-select prompt")
+assert_eq(#parsed_single.options, 3, "parsed 3 single-select options")
+assert_eq(parsed_single.initial_idx, 1, "detected initial cursor on option 1")
+assert_true(parsed_single.options[3].is_other == true, "detected Other option")
+local single_steps = approval.build_keystrokes(parsed_single, { type = "select", idx = 2 })
+assert_eq(#single_steps, 2, "single-select option 2 sends Down + Enter")
+assert_eq(single_steps[1].seq, "\27[B", "first keystroke is Down arrow")
+assert_eq(single_steps[2].seq, "\r", "second keystroke is Enter")
+
+local parsed_multi = approval.parse_prompt(table.concat({
+  "Question 1/2",
+  "Multi-select test (1/2): which checks should be included?",
+  "Select all that apply",
+  "  ❯ [ ] 1. Option A",
+  "    [ ] 2. Option B",
+  "    [ ] 3. Option C",
+  "  Space to toggle · Enter to submit · Esc to cancel",
+}, "\n"))
+assert_eq(parsed_multi.kind, "multi_select", "parsed multi-select prompt")
+assert_eq(parsed_multi.progress, "1/2", "parsed Question 1/2 progress badge")
+assert_eq(#parsed_multi.options, 3, "parsed 3 multi-select options")
+local multi_steps = approval.build_keystrokes(parsed_multi, { type = "multi_select", checked = { [1] = true, [3] = true } })
+assert_eq(multi_steps[1].seq, " ", "toggles option 1 with Space")
+assert_eq(multi_steps[2].seq, "\27[B", "moves down to option 2")
+assert_eq(multi_steps[3].seq, "\27[B", "moves down to option 3")
+assert_eq(multi_steps[4].seq, " ", "toggles option 3 with Space")
+assert_eq(multi_steps[5].seq, "\r", "submits multi-select with Enter")
+
+-- Rendered-screen TUI attention detection opens Neovim-style approval popup & auto-closes when cleared
 local tui_buf = vim.api.nvim_create_buf(false, true)
 vim.api.nvim_buf_set_lines(tui_buf, 0, -1, false, {
   "Test popup question for super-harness.nvim:",
-  "  1. (Recommended) Popup appeared while hidden",
-  "  2. Other",
+  "  ❯ 1. (Recommended) Popup appeared in Neovim style",
+  "    2. Other",
   "  ↑/↓ navigate · Enter to select · Esc to cancel",
   "",
   "",
@@ -146,12 +186,15 @@ local tui_sess = {
 }
 assert_eq(nvim_term._check_rendered_screen(tui_sess), "awaiting_input", "detects ask_question from rendered buffer tail")
 assert_eq(tui_sess.state, "awaiting_input", "transitions session state to awaiting_input")
-assert_true(window.is_visible(tui_sess), "auto-opened floating modal from rendered ask_question")
-window.hide(tui_sess)
--- Once user answers and prompt disappears from screen, state recovers from awaiting_input
+assert_true(approval.is_open(), "auto-opened Neovim-style approval popup from rendered ask_question")
+assert_true(not window.is_visible(tui_sess), "did not open raw harness terminal when attention_style == neovim")
+approval.move(1)
+assert_eq(approval._cursor, 2, "j/k move updates Neovim popup cursor")
+-- Once user answers and prompt disappears from screen, state recovers & Neovim popup auto-closes
 vim.api.nvim_buf_set_lines(tui_buf, 0, -1, false, { "Received your answer.", "Ready for next prompt." })
 assert_eq(nvim_term._check_rendered_screen(tui_sess), nil, "clears awaiting_input when prompt leaves screen")
 assert_eq(tui_sess.state, "thinking", "recovers state so future prompts can notify again")
+assert_true(not approval.is_open(), "auto-closed Neovim approval popup when prompt left screen")
 pcall(vim.api.nvim_buf_delete, tui_buf, { force = true })
 
 sh.config.options.notifications.enabled = false
